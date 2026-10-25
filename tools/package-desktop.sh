@@ -9,6 +9,14 @@
 #   macOS    prswt-<ver>-macos-<arch>.dmg         (PRSWT.app)
 # With TARGET (a Rust target triple) it cross-builds that target instead of
 # the host's, e.g. x86_64-apple-darwin on an Apple Silicon Mac.
+#
+# Signing (docs/signing.md):
+#   PRSWT_PREBUILT=1        package the binary already in target/ (Windows:
+#                           the release workflow signs it there first)
+#   MACOS_SIGN_IDENTITY     "Developer ID Application: …" in the keychain;
+#                           signs PRSWT.app (hardened runtime) and the .dmg
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
+#                           also notarize the .dmg and staple the ticket
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
@@ -17,7 +25,9 @@ TARGET=${1:-}
 mkdir -p dist
 
 build() {
-  if [ -n "$TARGET" ]; then
+  if [ "${PRSWT_PREBUILT:-}" = 1 ]; then
+    echo "engine/target/${TARGET:+$TARGET/}release"
+  elif [ -n "$TARGET" ]; then
     (cd engine && cargo build --release --locked -p prswt-desktop --target "$TARGET")
     echo "engine/target/$TARGET/release"
   else
@@ -85,9 +95,20 @@ EOF
 </dict></plist>
 EOF
     NAME="prswt-$VERSION-macos-$ARCH"
+    if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+      codesign --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "$APP"
+      codesign --verify --strict --verbose=2 "$APP"
+    fi
     rm -f "dist/$NAME.dmg"
     hdiutil create -volname PRSWT -srcfolder "$APP" -ov -format UDZO "dist/$NAME.dmg" >/dev/null
     rm -rf "$APP"
+    if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+      codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "dist/$NAME.dmg"
+      if [ -n "${APPLE_ID:-}" ]; then
+        xcrun notarytool submit "dist/$NAME.dmg" --apple-id "$APPLE_ID"           --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+        xcrun stapler staple "dist/$NAME.dmg"
+      fi
+    fi
     echo "dist/$NAME.dmg"
     ;;
   *)
