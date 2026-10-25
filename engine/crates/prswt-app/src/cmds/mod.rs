@@ -273,7 +273,7 @@ static CATALOG: &[CommandSpec] = &[
         "Project ▸ Activities ▸ Status",
         true,
         network::activity_progress,
-        "activity, actual_start?, actual_finish?, pct?, remaining?"
+        "activity, actual_start?, actual_finish?, pct?, remaining?, actual_cost? (cost to date, split over its resources and expenses by planned cost)"
     ),
     spec!(
         "relationship.add",
@@ -475,7 +475,7 @@ static CATALOG: &[CommandSpec] = &[
         "Tools ▸ Mitigation ▸ Accept",
         true,
         risk::attach,
-        "risk, strategy params as in mitigation.propose, post_probability?"
+        "risk, strategy params as in mitigation.propose, post_probability?, cost? (what the plan costs; default the strategy's own cost)"
     ),
     spec!(
         "simulation.run",

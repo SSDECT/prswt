@@ -30,3 +30,6 @@ As of Thu 29 00:00 (3 working days), A at 50 %, AC 500:
 | 600 | 400 | 500 | −100 | −200 | 0.8 | 0.6667 | 2000 | 1500 | −400 | 1.0909 | 1700 | 2750 | 2d | 0.6667 |
 
 PV within a day = the worked share of that day's budget on the project calendar (Mon 12:00 → 100).
+
+## Actual cost entry (`activity.progress actual_cost`)
+The cost to date is split over the activity's assignments and expenses in proportion to their planned cost (equally if none has one); the last item takes the rounding remainder, so AC adds back exactly. A 2d with 16 h × 100 = 1600 labour and a 400 expense; 1000 to date → 800 / 200; at 50 %: EV 1000, AC 1000, CPI 1. An activity with neither is rejected.

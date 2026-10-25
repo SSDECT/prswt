@@ -316,6 +316,80 @@ mod workflows {
     }
 
     #[test]
+    fn app_02_actual_cost_and_expected_delay() {
+        // Oracle (vault/05-Math/RES-EVM-oracles.md, actual cost split): A has
+        // 16 h x 100 = 1600 of labour and a 400 expense; 1000 to date splits
+        // 800 / 200, so AC = 1000.
+        let (mut w, h) = ws();
+        for (cmd, p) in [
+            (
+                "project.create",
+                json!({ "name": "X", "start": "2027-01-04" }),
+            ),
+            ("activity.add", json!({ "code": "A", "duration": "2d" })),
+            (
+                "activity.add",
+                json!({ "code": "B", "duration": "2d", "predecessors": ["A"] }),
+            ),
+            ("resource.add", json!({ "code": "R", "rate": 100 })),
+            (
+                "resource.assign",
+                json!({ "activity": "A", "resource": "R" }),
+            ),
+            (
+                "expense.add",
+                json!({ "activity": "A", "name": "Permit", "amount": 400 }),
+            ),
+            ("schedule.run", json!({})),
+            ("baseline.capture", json!({ "name": "BL1" })),
+            (
+                "risk.add",
+                json!({ "code": "R1", "title": "Late", "probability": 0.5,
+                                 "impacts": [{ "delay": "3d" }], "bindings": ["B"] }),
+            ),
+        ] {
+            w.execute(&h, cmd, &p).unwrap();
+        }
+        w.execute(
+            &h,
+            "activity.progress",
+            &json!({ "activity": "A", "actual_start": "2027-01-04T08:00", "pct": 50, "actual_cost": 1000 }),
+        )
+        .unwrap();
+        w.execute(
+            &h,
+            "project.update",
+            &json!({ "data_date": "2027-01-05T08:00" }),
+        )
+        .unwrap();
+        let evm = w.execute(&h, "evm.report", &json!({})).unwrap();
+        assert_eq!(num(&evm["ac"]), 1000.0);
+        assert_eq!(num(&evm["ev"]), 1000.0, "50% of 2000");
+        assert_eq!(num(&evm["cpi"]), 1.0);
+        let e = w
+            .execute(
+                &h,
+                "activity.progress",
+                &json!({ "activity": "B", "actual_cost": 10 }),
+            )
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::Validation);
+        let risks = w.execute(&h, "risk.list", &json!({})).unwrap();
+        assert_eq!(risks["risks"][0]["expected_delay"], "1.5d", "0.5 x 3d");
+        w.execute(
+            &h,
+            "mitigation.attach",
+            &json!({ "risk": "R1", "strategy": "contingency_buffer", "duration": "1d", "cost": 300 }),
+        )
+        .unwrap();
+        let risks = w.execute(&h, "risk.list", &json!({})).unwrap();
+        assert_eq!(
+            risks["risks"][0]["mitigations"][0]["cost"], "300.00",
+            "explicit cost kept"
+        );
+    }
+
+    #[test]
     fn app_02_unknown_and_bad_input_errors() {
         let (mut w, h) = ws();
         assert_eq!(

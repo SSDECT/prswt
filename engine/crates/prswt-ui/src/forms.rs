@@ -292,6 +292,12 @@ pub(crate) const FORMS: &[FormSpec] = &[
             f("actual_finish", "Actual finish", Kind::DateTime, false),
             f("pct", "Percent complete", Kind::Number(0.0, 100.0), false),
             f("remaining", "Remaining duration", Kind::Duration, false),
+            f(
+                "actual_cost",
+                "Actual cost to date",
+                Kind::Number(0.0, 1e12),
+                false,
+            ),
         ],
     },
     FormSpec {

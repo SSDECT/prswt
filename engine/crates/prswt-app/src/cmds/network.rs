@@ -387,8 +387,90 @@ pub fn activity_progress(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Valu
         pct_complete: pct,
         remaining: p.opt_duration("remaining", mpd)?,
     };
-    let e = w.apply(ctx, pid, bid, vec![cmd], None)?;
+    let mut cmds = vec![cmd];
+    if let Some(ac) = p.opt_money("actual_cost")? {
+        cmds.extend(split_actual_cost(state, id, ac)?);
+    }
+    let e = w.apply(ctx, pid, bid, cmds, None)?;
     Ok(json!({ "version": e.version }))
+}
+
+/// Spreads an activity's cost to date over its assignments and expenses in
+/// proportion to their planned cost (equally when nothing has a planned
+/// cost), so EVM's AC sums back to exactly `total`. The last item takes the
+/// rounding remainder.
+fn split_actual_cost(
+    state: &ProjectState,
+    activity: ActivityId,
+    total: Money,
+) -> Result<Vec<Command>, EngineError> {
+    if total.0 < Decimal::ZERO {
+        return Err(EngineError::validation("actual_cost must be 0 or more"));
+    }
+    let assignments: Vec<&Assignment> = state
+        .assignments
+        .values()
+        .filter(|a| a.activity == activity)
+        .collect();
+    let expenses: Vec<&Expense> = state
+        .expenses
+        .values()
+        .filter(|x| x.activity == activity)
+        .collect();
+    let planned = |a: &Assignment| -> Decimal {
+        state
+            .resources
+            .get(&a.resource)
+            .and_then(|r| r.rates.first())
+            .and_then(|e| e.value.get(usize::from(a.rate_type)))
+            .and_then(|rate| rate.0.checked_mul(a.budget_units))
+            .unwrap_or(Decimal::ZERO)
+    };
+    let mut weights: Vec<Decimal> = assignments.iter().map(|a| planned(a)).collect();
+    weights.extend(expenses.iter().map(|x| x.budget.0));
+    if weights.is_empty() {
+        return Err(EngineError::validation(
+            "the activity has no resources or expenses to carry an actual cost; assign a resource or add an expense first",
+        ));
+    }
+    let sum = weights
+        .iter()
+        .try_fold(Decimal::ZERO, |s, w| s.checked_add(*w))
+        .ok_or_else(|| EngineError::validation("planned cost is too large"))?;
+    let sum = if sum <= Decimal::ZERO {
+        weights.fill(Decimal::ONE);
+        Decimal::from(weights.len())
+    } else {
+        sum
+    };
+    let mut shares = Vec::with_capacity(weights.len());
+    let mut given = Decimal::ZERO;
+    for (i, w) in weights.iter().enumerate() {
+        let share = if i + 1 == weights.len() {
+            total.0 - given
+        } else {
+            total
+                .0
+                .checked_mul(*w)
+                .and_then(|x| x.checked_div(sum))
+                .map(|x| x.round_dp(2))
+                .ok_or_else(|| EngineError::validation("actual_cost is too large"))?
+        };
+        given += share;
+        shares.push(Money(share));
+    }
+    let mut out = Vec::with_capacity(shares.len());
+    for (a, share) in assignments.iter().zip(&shares) {
+        let mut a = (*a).clone();
+        a.actual_cost = *share;
+        out.push(Command::UpsertAssignment { assignment: a });
+    }
+    for (x, share) in expenses.iter().zip(shares.iter().skip(assignments.len())) {
+        let mut x = (*x).clone();
+        x.actual = *share;
+        out.push(Command::UpsertExpense { expense: x });
+    }
+    Ok(out)
 }
 
 pub fn relationship_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
