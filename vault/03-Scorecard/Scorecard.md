@@ -148,7 +148,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] DSK-05 Long commands (risk analysis, leveling) on a background thread; the window keeps repainting
 - [x] DSK-06 Dialogs for every command (calendar date pickers, code pick lists via `project.lookups`); coverage test over `commands.list`
 - [x] DSK-07 Visual polish: P6-style Gantt with date axis and table, start screen, readable dates and money, app style, icon; design B (modern workspace: navigation, inspector, Ctrl+K palette, Inter, light/dark)
-- [~] DSK-08 Release builds: Windows + Linux packages done; macOS via CI once the repo is on GitHub
+- [x] DSK-08 Release builds: Windows, Linux and macOS (Apple Silicon, Intel) packages from `desktop-release` on GitHub
 
 ## P12 — Cloud projects ([[Sync-Plan]], [[ADR-0010-cloud-sync-collaboration]])
 - [x] SYNC-01 Members and roles, scoped engine access, desktop sign-in (loopback + PKCE), save to / open from cloud
