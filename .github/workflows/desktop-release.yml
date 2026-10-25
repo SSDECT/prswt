@@ -41,7 +41,7 @@ jobs:
         run: cargo test --locked -p prswt-desktop -p prswt-ui -p prswt-app -p prswt-state
       - name: Package
         shell: bash
-        run: tools/package-desktop.sh ${{ matrix.target }}
+        run: bash tools/package-desktop.sh ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: prswt-${{ matrix.os }}-${{ matrix.target || 'native' }}
