@@ -1,0 +1,19 @@
+[package]
+name = "prswt-calendar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["serde", "std"] }
+prswt-core.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest = "1.12.0"

@@ -1,0 +1,27 @@
+[package]
+name = "prswt-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+prswt-core.workspace = true
+prswt-app = { workspace = true, optional = true }
+egui = "0.37.0"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+serde_json = "1.0.154"
+egui_extras = { version = "0.37.0", default-features = false, features = ["datepicker", "serde"] }
+jiff = { version = "0.2.38", default-features = false, features = ["std"] }
+
+[features]
+default = ["local"]
+# In-process engine for the desktop app (off for the web build).
+local = ["dep:prswt-app"]
+
+[dev-dependencies]
+prswt-app.workspace = true
+
+[lints]
+workspace = true

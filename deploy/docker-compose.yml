@@ -1,0 +1,79 @@
+# PRSWT on VM 130 `apps` (~/prswt). Public access is via the existing
+# Cloudflare Tunnel: prswt.juz.ai -> https://127.0.0.1:8460 (loopback, TLS verified with origin server name prswt.juz.ai). Nothing else is
+# published; the database has no host port.
+name: prswt
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: prswt
+      POSTGRES_DB: prswt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prswt -d prswt"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: prswt-server:latest
+    restart: unless-stopped
+    env_file: .env
+    # Runs as the host user that owns tls/ (lego writes the certs as srs, mode 600).
+    user: "1000:1000"
+    environment:
+      DATABASE_URL: postgres://prswt:${POSTGRES_PASSWORD}@db:5432/prswt
+      PRSWT_BIND: 0.0.0.0:8080
+      # Let's Encrypt cert (DNS-01 via le_cert.sh); cloudflared verifies it.
+      PRSWT_TLS_CERT: /tls/certificates/prswt.juz.ai.crt
+      PRSWT_TLS_KEY: /tls/certificates/prswt.juz.ai.key
+    volumes:
+      - ./tls:/tls:ro
+    ports:
+      - "127.0.0.1:8460:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal, edge]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  # Daily: renew the Let's Encrypt certificate (DNS-01, Cloudflare DNS token in
+  # tls/cf.env) once fewer than 30 days remain. The server reloads it by itself.
+  cert-renew:
+    image: goacme/lego:v4.26.0
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file: tls/cf.env
+    environment:
+      LEGO_DISABLE_CNAME_SUPPORT: "true"
+    volumes:
+      - ./tls:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        while :; do
+        /lego --path /data --accept-tos --email bot@juz.ai --dns cloudflare
+        --dns.resolvers 1.1.1.1:53 --domains prswt.juz.ai renew --days 30 --no-random-sleep;
+        sleep 86400; done
+    networks: [edge]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  internal:
+    internal: true
+  edge: {}
+
+volumes:
+  pgdata:

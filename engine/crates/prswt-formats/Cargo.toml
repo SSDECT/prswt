@@ -1,0 +1,21 @@
+[package]
+name = "prswt-formats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+prswt-core.workspace = true
+prswt-state.workspace = true
+prswt-calendar.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+rust_decimal = "1.43.0"
+quick-xml = "0.42.0"
+
+[dev-dependencies]
+prswt-cpm.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,67 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+prswt-core = { path = "crates/prswt-core" }
+prswt-calendar = { path = "crates/prswt-calendar" }
+prswt-cpm = { path = "crates/prswt-cpm" }
+prswt-resource = { path = "crates/prswt-resource" }
+prswt-evm = { path = "crates/prswt-evm" }
+prswt-risk = { path = "crates/prswt-risk" }
+prswt-state = { path = "crates/prswt-state" }
+prswt-app = { path = "crates/prswt-app" }
+prswt-store = { path = "crates/prswt-store" }
+prswt-mcp = { path = "crates/prswt-mcp" }
+prswt-ui = { path = "crates/prswt-ui", default-features = false }
+prswt-api = { path = "crates/prswt-api" }
+prswt-formats = { path = "crates/prswt-formats" }
+prswt-server = { path = "crates/prswt-server" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+missing_docs = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+return_self_not_must_use = "allow"
+many_single_char_names = "allow"
+type_complexity = "allow"
+too_many_lines = "allow"
+single_match_else = "allow"
+needless_pass_by_value = "allow"
+assert_is_empty = "allow"
+trivially_copy_pass_by_ref = "allow"
+doc_markdown = "allow"
+format_collect = "allow"
+similar_names = "allow"
+# never-crash (ADR-0007); allowed in tests via clippy.toml
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.test]
+opt-level = 1

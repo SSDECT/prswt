@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "prswt": {
+      "command": "D:\\PRSWT\\engine\\target\\release\\prswt-cli.exe",
+      "args": ["mcp", "--sample", "bridge"]
+    },
+    "prswt-db": {
+      "command": "D:\\PRSWT\\engine\\target\\release\\prswt-cli.exe",
+      "args": ["mcp", "--db"]
+    }
+  }
+}

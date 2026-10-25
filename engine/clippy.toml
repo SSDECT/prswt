@@ -1,0 +1,10 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+
+# The engine never reads the clock: time arrives via data date / params, and
+# these calls trap on wasm32.
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "engine must not read the clock" },
+    { path = "std::time::SystemTime::now", reason = "engine must not read the clock" },
+]

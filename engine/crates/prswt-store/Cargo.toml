@@ -1,0 +1,23 @@
+[package]
+name = "prswt-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+prswt-core.workspace = true
+prswt-state.workspace = true
+serde_json = "1.0.154"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "json", "uuid", "migrate", "macros", "chrono"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros"] }
+uuid = "1.29.0"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rust_decimal = "1.43.0"
+

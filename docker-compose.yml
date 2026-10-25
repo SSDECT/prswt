@@ -1,0 +1,23 @@
+# Local PostgreSQL for PRSWT. Credentials come from the gitignored .env
+# (temporary; they move to Bitwarden later, see CLAUDE.md).
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: prswt-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
+    volumes:
+      - prswt-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  prswt-pgdata:

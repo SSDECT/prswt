@@ -1,0 +1,572 @@
+use std::collections::BTreeMap;
+
+use chrono::NaiveDate;
+use prswt_core::ids::{
+    ActivityId, AssignmentId, BranchId, CalendarId, ExpenseId, ProjectId, RelationshipId,
+    ResourceId, WbsId,
+};
+use prswt_core::model::{
+    Accrual, Activity, ActivityKind, Assignment, CalendarDef, Constraint, ConstraintKind,
+    DayInterval, Effective, Expense, PercentCompleteType, RelationKind, Relationship, Resource,
+    ResourceKind, SpreadCurve, WbsNode,
+};
+use prswt_core::{EngineError, Instant, Money, WorkMinutes};
+use prswt_state::{Command, ProjectState};
+use rust_decimal::Decimal;
+use serde_json::{Value, json};
+
+use crate::params::{P, days};
+use crate::{Ctx, Workspace};
+
+fn head(w: &Workspace, pid: ProjectId, bid: BranchId) -> Result<&ProjectState, EngineError> {
+    Ok(&w.repo_ref(pid)?.branch(bid)?.head)
+}
+
+fn calendar_by(state: &ProjectState, s: Option<&str>) -> Result<CalendarId, EngineError> {
+    match s {
+        None => Ok(state.project.default_calendar),
+        Some(x) => {
+            if let Ok(id) = x.parse::<CalendarId>()
+                && state.calendars.contains_key(&id)
+            {
+                return Ok(id);
+            }
+            state
+                .calendars
+                .values()
+                .find(|c| c.name == x)
+                .map(|c| c.id)
+                .ok_or_else(|| EngineError::not_found(format!("calendar `{x}`")))
+        }
+    }
+}
+
+fn wbs_by(state: &ProjectState, s: Option<&str>) -> Result<WbsId, EngineError> {
+    match s {
+        None => state
+            .wbs
+            .values()
+            .find(|w| w.parent.is_none())
+            .map(|w| w.id)
+            .ok_or_else(|| EngineError::not_found("root WBS")),
+        Some(x) => {
+            if let Ok(id) = x.parse::<WbsId>()
+                && state.wbs.contains_key(&id)
+            {
+                return Ok(id);
+            }
+            state
+                .wbs
+                .values()
+                .find(|w| w.code == x)
+                .map(|w| w.id)
+                .ok_or_else(|| EngineError::not_found(format!("WBS `{x}`")))
+        }
+    }
+}
+
+fn resource_by(state: &ProjectState, s: &str) -> Result<ResourceId, EngineError> {
+    if let Ok(id) = s.parse::<ResourceId>()
+        && state.resources.contains_key(&id)
+    {
+        return Ok(id);
+    }
+    state
+        .resources
+        .values()
+        .find(|r| r.code == s)
+        .map(|r| r.id)
+        .ok_or_else(|| EngineError::not_found(format!("resource `{s}`")))
+}
+
+fn mpd_of(state: &ProjectState, cal: CalendarId) -> i64 {
+    state.calendars.get(&cal).map_or(480, |c| c.minutes_per_day)
+}
+
+pub(crate) fn parse_kind(s: &str) -> Result<ActivityKind, EngineError> {
+    Ok(match s {
+        "task" | "task_dependent" => ActivityKind::TaskDependent,
+        "resource_dependent" => ActivityKind::ResourceDependent,
+        "level_of_effort" | "loe" => ActivityKind::LevelOfEffort,
+        "start_milestone" => ActivityKind::StartMilestone,
+        "finish_milestone" | "milestone" => ActivityKind::FinishMilestone,
+        "wbs_summary" => ActivityKind::WbsSummary,
+        _ => {
+            return Err(EngineError::validation(format!(
+                "unknown activity kind `{s}`"
+            )));
+        }
+    })
+}
+
+pub(crate) fn parse_rel(s: &str) -> Result<RelationKind, EngineError> {
+    Ok(match s.to_ascii_uppercase().as_str() {
+        "FS" => RelationKind::FS,
+        "SS" => RelationKind::SS,
+        "FF" => RelationKind::FF,
+        "SF" => RelationKind::SF,
+        _ => {
+            return Err(EngineError::validation(format!(
+                "unknown relationship type `{s}`"
+            )));
+        }
+    })
+}
+
+fn parse_constraint(p: &P<'_>) -> Result<Option<Constraint>, EngineError> {
+    let Some(Value::Object(m)) = p.raw("constraint") else {
+        return Ok(None);
+    };
+    let c = P(m);
+    let kind = match c.str("kind")? {
+        "asap" => ConstraintKind::AsSoonAsPossible,
+        "alap" => ConstraintKind::AsLateAsPossible,
+        "snet" | "start_no_earlier_than" => ConstraintKind::StartNoEarlierThan,
+        "snlt" | "start_no_later_than" => ConstraintKind::StartNoLaterThan,
+        "fnet" | "finish_no_earlier_than" => ConstraintKind::FinishNoEarlierThan,
+        "fnlt" | "finish_no_later_than" => ConstraintKind::FinishNoLaterThan,
+        "start_on" => ConstraintKind::StartOn,
+        "finish_on" => ConstraintKind::FinishOn,
+        "mso" | "mandatory_start" => ConstraintKind::MandatoryStart,
+        "mfo" | "mandatory_finish" => ConstraintKind::MandatoryFinish,
+        k => return Err(EngineError::validation(format!("unknown constraint `{k}`"))),
+    };
+    let con = Constraint {
+        kind,
+        date: c.opt_instant("date")?,
+    };
+    con.validate()?;
+    Ok(Some(con))
+}
+
+pub fn calendar_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let state = head(w, pid, bid)?;
+    let base = p
+        .opt_str("base")?
+        .map(|b| calendar_by(state, Some(b)))
+        .transpose()?;
+    let (week, mpd) = match p.opt_str("week")? {
+        Some(s) => {
+            let (wk, m) = super::project::week_preset(s)?;
+            (Some(wk), m)
+        }
+        None if base.is_some() => (None, base.map_or(480, |b| mpd_of(state, b))),
+        None => {
+            let (wk, m) = super::project::week_preset("5x8")?;
+            (Some(wk), m)
+        }
+    };
+    let mpd = match p.opt_decimal("hours_per_day")? {
+        Some(h) => (h * Decimal::from(60)).round().try_into().unwrap_or(mpd),
+        None => mpd,
+    };
+    let cal = CalendarDef {
+        id: CalendarId::new(),
+        name: p.str("name")?.to_owned(),
+        base,
+        week,
+        exceptions: BTreeMap::new(),
+        minutes_per_day: mpd,
+    };
+    let id = cal.id;
+    let e = w.apply(
+        ctx,
+        pid,
+        bid,
+        vec![Command::UpsertCalendar { calendar: cal }],
+        None,
+    )?;
+    Ok(json!({ "calendar": id, "version": e.version }))
+}
+
+pub fn calendar_exception(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let state = head(w, pid, bid)?;
+    let cid = calendar_by(state, p.opt_str("calendar")?)?;
+    let mut cal = state
+        .calendars
+        .get(&cid)
+        .cloned()
+        .ok_or_else(|| EngineError::not_found("calendar"))?;
+    let date = NaiveDate::parse_from_str(p.str("date")?, "%Y-%m-%d")
+        .map_err(|_| EngineError::validation("date must be YYYY-MM-DD"))?;
+    let work: Vec<(String, String)> = p.opt("work")?.unwrap_or_default();
+    let hm = |s: &str| -> Result<u16, EngineError> {
+        let (h, m) = s
+            .split_once(':')
+            .ok_or_else(|| EngineError::validation("times must be HH:MM"))?;
+        let (h, m): (u16, u16) = (
+            h.parse().map_err(|_| EngineError::validation("bad hour"))?,
+            m.parse()
+                .map_err(|_| EngineError::validation("bad minute"))?,
+        );
+        if h > 24 || m > 59 || (h == 24 && m > 0) {
+            return Err(EngineError::validation("time out of range"));
+        }
+        Ok(h * 60 + m)
+    };
+    let intervals = work
+        .iter()
+        .map(|(a, b)| Ok(DayInterval::new(hm(a)?, hm(b)?)))
+        .collect::<Result<Vec<_>, EngineError>>()?;
+    cal.exceptions.insert(date, intervals);
+    let e = w.apply(
+        ctx,
+        pid,
+        bid,
+        vec![Command::UpsertCalendar { calendar: cal }],
+        None,
+    )?;
+    Ok(json!({ "version": e.version }))
+}
+
+pub fn wbs_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let state = head(w, pid, bid)?;
+    let parent = wbs_by(state, p.opt_str("parent")?)?;
+    let node = WbsNode {
+        id: WbsId::new(),
+        parent: Some(parent),
+        code: p.str("code")?.to_owned(),
+        name: p.opt_str("name")?.unwrap_or(p.str("code")?).to_owned(),
+        obs: None,
+        sort_key: i64::try_from(state.wbs.len()).unwrap_or(0),
+    };
+    let id = node.id;
+    let e = w.apply(ctx, pid, bid, vec![Command::UpsertWbs { node }], None)?;
+    Ok(json!({ "wbs": id, "version": e.version }))
+}
+
+pub fn activity_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let state = head(w, pid, bid)?;
+    let code = p.str("code")?.to_owned();
+    if state.activities.values().any(|a| a.code == code) {
+        return Err(EngineError::validation(format!(
+            "activity code `{code}` already exists"
+        )));
+    }
+    let calendar = calendar_by(state, p.opt_str("calendar")?)?;
+    let mpd = mpd_of(state, calendar);
+    let kind = p
+        .opt_str("kind")?
+        .map(parse_kind)
+        .transpose()?
+        .unwrap_or(ActivityKind::TaskDependent);
+    let duration = match p.opt_estimate("duration", mpd)? {
+        Some(d) => d,
+        None if kind.is_milestone() => prswt_core::model::Estimate::fixed(WorkMinutes::ZERO),
+        None => {
+            return Err(EngineError::validation(
+                "missing required parameter `duration`",
+            ));
+        }
+    };
+    let a = Activity {
+        id: ActivityId::new(),
+        name: p.opt_str("name")?.unwrap_or(&code).to_owned(),
+        code,
+        wbs: wbs_by(state, p.opt_str("wbs")?)?,
+        kind,
+        calendar,
+        duration,
+        remaining: None,
+        primary_constraint: parse_constraint(&p)?,
+        secondary_constraint: None,
+        actual_start: None,
+        actual_finish: None,
+        pct_complete: Decimal::ZERO,
+        pct_type: PercentCompleteType::Duration,
+    };
+    let id = a.id;
+    let mut cmds = vec![Command::UpsertActivity {
+        activity: Box::new(a),
+    }];
+    let preds: Vec<String> = p.opt("predecessors")?.unwrap_or_default();
+    for pred in preds {
+        cmds.push(Command::UpsertRelationship {
+            relationship: Relationship {
+                id: RelationshipId::new(),
+                pred: w.activity_id(pid, bid, &pred)?,
+                succ: id,
+                kind: RelationKind::FS,
+                lag: WorkMinutes::ZERO,
+                lag_calendar: None,
+            },
+        });
+    }
+    let e = w.apply(ctx, pid, bid, cmds, p.opt_u64("expected_version")?)?;
+    Ok(json!({ "activity": id, "version": e.version }))
+}
+
+pub fn activity_update(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let id = w.activity_id(pid, bid, p.str("activity")?)?;
+    let state = head(w, pid, bid)?;
+    let mut a = state
+        .activities
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| EngineError::not_found("activity"))?;
+    if let Some(n) = p.opt_str("name")? {
+        n.clone_into(&mut a.name);
+    }
+    if let Some(k) = p.opt_str("kind")? {
+        a.kind = parse_kind(k)?;
+    }
+    if let Some(c) = p.opt_str("calendar")? {
+        a.calendar = calendar_by(state, Some(c))?;
+    }
+    if let Some(wb) = p.opt_str("wbs")? {
+        a.wbs = wbs_by(state, Some(wb))?;
+    }
+    let mpd = mpd_of(state, a.calendar);
+    if let Some(d) = p.opt_estimate("duration", mpd)? {
+        a.duration = d;
+        a.remaining = None;
+    }
+    if p.bool_or("clear_constraint", false)? {
+        a.primary_constraint = None;
+        a.secondary_constraint = None;
+    }
+    if let Some(c) = parse_constraint(&p)? {
+        a.primary_constraint = Some(c);
+    }
+    let e = w.apply(
+        ctx,
+        pid,
+        bid,
+        vec![Command::UpsertActivity {
+            activity: Box::new(a),
+        }],
+        p.opt_u64("expected_version")?,
+    )?;
+    Ok(json!({ "activity": id, "version": e.version }))
+}
+
+pub fn activity_delete(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let id = w.activity_id(pid, bid, p.str("activity")?)?;
+    let e = w.apply(
+        ctx,
+        pid,
+        bid,
+        vec![Command::DeleteActivity {
+            id,
+            reconnect: p.bool_or("reconnect", false)?,
+        }],
+        None,
+    )?;
+    Ok(json!({ "version": e.version, "changes": e.changes.len() }))
+}
+
+pub fn activity_progress(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let id = w.activity_id(pid, bid, p.str("activity")?)?;
+    let state = head(w, pid, bid)?;
+    let mpd = state
+        .activities
+        .get(&id)
+        .map_or(480, |a| mpd_of(state, a.calendar));
+    let pct = p.opt_decimal("pct")?;
+    if pct.is_some_and(|x| x < Decimal::ZERO || x > Decimal::ONE_HUNDRED) {
+        return Err(EngineError::validation("pct must be 0..=100"));
+    }
+    let cmd = Command::UpdateProgress {
+        activity: id,
+        actual_start: p.opt_instant("actual_start")?,
+        actual_finish: p.opt_instant("actual_finish")?,
+        pct_complete: pct,
+        remaining: p.opt_duration("remaining", mpd)?,
+    };
+    let e = w.apply(ctx, pid, bid, vec![cmd], None)?;
+    Ok(json!({ "version": e.version }))
+}
+
+pub fn relationship_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let pred = w.activity_id(pid, bid, p.str("pred")?)?;
+    let succ = w.activity_id(pid, bid, p.str("succ")?)?;
+    let state = head(w, pid, bid)?;
+    let mpd = state
+        .activities
+        .get(&pred)
+        .map_or(480, |a| mpd_of(state, a.calendar));
+    let kind = parse_rel(p.opt_str("kind")?.unwrap_or("FS"))?;
+    let r = Relationship {
+        id: RelationshipId::new(),
+        pred,
+        succ,
+        kind,
+        lag: p.opt_duration("lag", mpd)?.unwrap_or(WorkMinutes::ZERO),
+        lag_calendar: None,
+    };
+    let id = r.id;
+    let e = w.apply(
+        ctx,
+        pid,
+        bid,
+        vec![Command::UpsertRelationship { relationship: r }],
+        None,
+    )?;
+    Ok(json!({ "relationship": id, "version": e.version }))
+}
+
+pub fn relationship_delete(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let pred = w.activity_id(pid, bid, p.str("pred")?)?;
+    let succ = w.activity_id(pid, bid, p.str("succ")?)?;
+    let kind = p.opt_str("kind")?.map(parse_rel).transpose()?;
+    let state = head(w, pid, bid)?;
+    let ids: Vec<RelationshipId> = state
+        .relationships
+        .values()
+        .filter(|r| r.pred == pred && r.succ == succ && kind.is_none_or(|k| k == r.kind))
+        .map(|r| r.id)
+        .collect();
+    if ids.is_empty() {
+        return Err(EngineError::not_found("relationship"));
+    }
+    let cmds = ids
+        .into_iter()
+        .map(|id| Command::DeleteRelationship { id })
+        .collect();
+    let e = w.apply(ctx, pid, bid, cmds, None)?;
+    Ok(json!({ "version": e.version }))
+}
+
+pub fn resource_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let state = head(w, pid, bid)?;
+    let code = p.str("code")?.to_owned();
+    if state.resources.values().any(|r| r.code == code) {
+        return Err(EngineError::validation(format!(
+            "resource `{code}` already exists"
+        )));
+    }
+    let kind = match p.opt_str("kind")?.unwrap_or("labor") {
+        "labor" => ResourceKind::Labor,
+        "non_labor" | "equipment" => ResourceKind::NonLabor,
+        "material" => ResourceKind::Material,
+        k => {
+            return Err(EngineError::validation(format!(
+                "unknown resource kind `{k}`"
+            )));
+        }
+    };
+    let rate = p.opt_money("rate")?.unwrap_or(Money::ZERO);
+    let r = Resource {
+        id: ResourceId::new(),
+        name: p.opt_str("name")?.unwrap_or(&code).to_owned(),
+        code,
+        kind,
+        calendar: calendar_by(state, p.opt_str("calendar")?)?,
+        max_units: vec![Effective {
+            from: Instant::MIN,
+            value: p.opt_decimal("max_units")?.unwrap_or(Decimal::ONE),
+        }],
+        rates: vec![Effective {
+            from: Instant::MIN,
+            value: [rate; 5],
+        }],
+        unit_of_measure: p.opt_str("unit")?.map(str::to_owned),
+        obs: None,
+    };
+    let id = r.id;
+    let e = w.apply(
+        ctx,
+        pid,
+        bid,
+        vec![Command::UpsertResource { resource: r }],
+        None,
+    )?;
+    Ok(json!({ "resource": id, "version": e.version }))
+}
+
+pub fn resource_assign(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let activity = w.activity_id(pid, bid, p.str("activity")?)?;
+    let state = head(w, pid, bid)?;
+    let resource = resource_by(state, p.str("resource")?)?;
+    let uph = p.opt_decimal("units_per_hour")?.unwrap_or(Decimal::ONE);
+    let hours = state.activities.get(&activity).map_or(Decimal::ZERO, |a| {
+        Decimal::from(a.duration.planning_value().0) / Decimal::from(60)
+    });
+    let units = p.opt_decimal("units")?.unwrap_or(hours * uph);
+    let curve = match p.opt_str("curve")?.unwrap_or("uniform") {
+        "uniform" => SpreadCurve::Uniform,
+        "front" | "front_loaded" => SpreadCurve::FrontLoaded,
+        "back" | "back_loaded" => SpreadCurve::BackLoaded,
+        "bell" => SpreadCurve::Bell,
+        c => return Err(EngineError::validation(format!("unknown curve `{c}`"))),
+    };
+    let a = Assignment {
+        id: AssignmentId::new(),
+        activity,
+        resource,
+        budget_units: units,
+        units_per_hour: uph,
+        rate_type: 0,
+        cost_account: None,
+        curve,
+        actual_units: Decimal::ZERO,
+        actual_cost: Money::ZERO,
+        remaining_units: None,
+    };
+    let id = a.id;
+    let e = w.apply(
+        ctx,
+        pid,
+        bid,
+        vec![Command::UpsertAssignment { assignment: a }],
+        None,
+    )?;
+    Ok(json!({ "assignment": id, "units": units, "version": e.version }))
+}
+
+pub fn expense_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let activity = w.activity_id(pid, bid, p.str("activity")?)?;
+    let accrual = match p.opt_str("accrual")?.unwrap_or("uniform") {
+        "start" => Accrual::Start,
+        "end" => Accrual::End,
+        "uniform" => Accrual::Uniform,
+        a => return Err(EngineError::validation(format!("unknown accrual `{a}`"))),
+    };
+    let x = Expense {
+        id: ExpenseId::new(),
+        activity,
+        cost_account: None,
+        name: p.str("name")?.to_owned(),
+        budget: Money(p.decimal("amount")?),
+        actual: p.opt_money("actual")?.unwrap_or(Money::ZERO),
+        accrual,
+    };
+    let id = x.id;
+    let e = w.apply(
+        ctx,
+        pid,
+        bid,
+        vec![Command::UpsertExpense { expense: x }],
+        None,
+    )?;
+    Ok(json!({ "expense": id, "version": e.version }))
+}
+
+#[allow(dead_code)]
+pub(crate) fn fmt_days(w: i64, mpd: i64) -> String {
+    days(w, mpd)
+}

@@ -1,0 +1,32 @@
+[package]
+name = "prswt-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+prswt-core.workspace = true
+prswt-app.workspace = true
+prswt-state.workspace = true
+prswt-ui = { workspace = true, features = ["local"] }
+prswt-mcp.workspace = true
+egui = "0.37.0"
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "persistence"] }
+rfd = "0.17.2"
+jiff = { version = "0.2.38", default-features = false, features = ["std"] }
+serde_json = "1.0.154"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "blocking"] }
+keyring = { version = "3.6.3", features = ["windows-native", "apple-native", "linux-native"] }
+open = "5.3.2"
+getrandom = "0.4.3"
+sha2 = "0.11.1"
+base64 = "0.23.1"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "prswt"
+path = "src/main.rs"

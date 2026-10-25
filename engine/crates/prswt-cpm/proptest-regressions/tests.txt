@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c81dd8e99580c141870d44c3bfc92a62c287efc4696f141cd7c7ed072ce824a9 # shrinks to rn = RandNet { durs: [1920, 10260, 60, 0], links: [(1, 2, FF, -1920), (0, 1, FS, 2700)] }

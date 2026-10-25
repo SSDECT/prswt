@@ -1,0 +1,13 @@
+/engine/target/
+.env
+.env.*
+!.env.example
+*.secret
+vault/.obsidian/workspace*.json
+vault/.obsidian/cache
+
+
+# TLS material on the server (never committed)
+/deploy/tls/
+# Desktop packages (tools/package-desktop.sh)
+/dist/

@@ -1,0 +1,6 @@
+engine/target
+**/.env
+.env
+vault
+docs
+tools
