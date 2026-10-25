@@ -25,7 +25,6 @@
 - Presence counts open watch streams; a desktop that loses its network shows as present until the server notices the dropped connection.
 - Other organizations' accounts need the Azure app registration switched to multi-tenant, `MICROSOFT_ALLOWED_TENANTS` and the `xms_edov` optional claim.
 - A local change that no longer fits after a sync (an edit or link to something deleted on the server) is listed as a conflict with field `*` and your value; it is not kept.
-- Accepting a proposal on one copy merges it there; the server checks only that the sandbox was open and the caller may commit, not that live already holds the sandbox's changes (review M9, second half).
 - A project opened as a plain `.prswt` file cannot become a cloud copy by opening it from the cloud (close the file first): linking would count unsent differences as in sync.
 - Viewers cannot make sandboxes on a shared server (a sandbox is a write); they run risk analysis on a downloaded copy.
 

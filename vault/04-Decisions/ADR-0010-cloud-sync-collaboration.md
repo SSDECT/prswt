@@ -53,6 +53,7 @@ What PRSWT already has:
 - Sandbox create/discard and `sync.link` are writes (viewers cannot); a project holds at most 1,000 branches. `sync.link` / `sync.outbox` / `sync.apply` and `project.close` are refused on a shared server. Read-only callers (`Ctx::read_only`) write nothing.
 - The server makes a project's creator its owner through `claim_project`, which refuses an id that is stored or has members; a failure fails the command. The last owner cannot leave. Orphans are adopted once per database (`server_flags`).
 - Watch streams are capped (8 per account, 200 per project, 5,000 in all) and end when the person is removed. Saving after a write fails only for projects that request changed.
+- A sandbox arriving as merged is accepted only when live already holds its changes (`Repo::holds_sandbox`; fields both sides changed count as held).
 - Microsoft sign-in needs `MICROSOFT_TENANT`; multi-tenant needs `MICROSOFT_ALLOWED_TENANTS` and a verified email (`xms_edov`).
 - Desktop: streams stop on close and sign-out (and time out when silent), sign-in waits on its own thread, sign-out revokes the token, failed uploads stay local, closed projects leave no sync state, the cache is written after every sync attempt, file dialogs open in front of the window.
 

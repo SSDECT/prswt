@@ -629,6 +629,13 @@ fn adopt_state(
                 "committing to live needs a person",
             ));
         }
+        // Live arrives first in a sync, so a real commit is already in it.
+        if !w.repo_ref(pid)?.holds_sandbox(id)? {
+            return Err(EngineError::validation(format!(
+                "sandbox `{}` is marked merged, but live does not hold its changes; commit it again",
+                b.meta.name
+            )));
+        }
     }
     let proposal = if proposal_changed {
         let at = w.now();

@@ -1019,6 +1019,47 @@ mod cloud {
         );
     }
 
+    /// Review M9: a sandbox is accepted as merged only when live holds its
+    /// changes; a real commit goes through.
+    #[test]
+    fn sync_06_merged_needs_the_changes_in_live() {
+        let (mut server, mut a, owner) = shared_project();
+        let o = owner.clone();
+        a.execute(&owner, "sandbox.create", &json!({ "name": "s" }))
+            .unwrap();
+        a.execute(
+            &owner,
+            "activity.update",
+            &json!({ "branch": "s", "activity": "D10", "name": "Survey and soil tests" }),
+        )
+        .unwrap();
+        sync(&mut a, &mut server, &owner).unwrap();
+        let repo = a.projects().next().unwrap();
+        let sb = repo.branches().find(|b| b.meta.name == "s").unwrap();
+        let mut meta = sb.meta.clone();
+        meta.status = prswt_state::BranchStatus::Merged;
+        let req = json!({
+            "project": pid_of(&server),
+            "meta": meta,
+            "base_version": sb.meta.version,
+        });
+        let err = server.execute(&o, "sync.receive", &req).unwrap_err();
+        assert_eq!(err.code, ErrorCode::Validation, "{err:?}");
+
+        a.execute(&owner, "sandbox.commit", &json!({ "sandbox": "s" }))
+            .unwrap();
+        sync(&mut a, &mut server, &owner).unwrap();
+        let on_server = server.execute(&o, "sandbox.list", &json!({})).unwrap();
+        let s = on_server["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["name"] == "s")
+            .unwrap()
+            .clone();
+        assert_eq!(s["status"], "merged", "{s}");
+    }
+
     // ── helpers ──
 
     fn live_version(w: &Workspace) -> u64 {

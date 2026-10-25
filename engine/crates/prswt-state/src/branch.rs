@@ -478,6 +478,19 @@ impl Repo {
         Ok((event, conflicts))
     }
 
+    /// SYNC-06: whether the sandbox's parent already holds the sandbox's
+    /// changes, so that marking it merged loses nothing. Fields that both
+    /// sides changed count as held (the merge may have kept live's value).
+    pub fn holds_sandbox(&self, sandbox: BranchId) -> Result<bool, EngineError> {
+        let sb = self.branch(sandbox)?;
+        let parent_id = sb.meta.parent.ok_or_else(|| {
+            EngineError::validation("the live branch has no parent to merge into")
+        })?;
+        let parent = self.branch(parent_id)?;
+        let (merged, _) = three_way(&sb.base, &parent.head, &sb.head, MergeStrategy::PreferLive)?;
+        Ok(diff_states(&parent.head, &merged).is_empty())
+    }
+
     /// Marks a sandbox discarded (live cannot be discarded).
     pub fn discard(&mut self, sandbox: BranchId) -> Result<(), EngineError> {
         let b = self.branch_mut(sandbox)?;
