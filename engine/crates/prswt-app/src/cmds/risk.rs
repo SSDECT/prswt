@@ -387,13 +387,24 @@ pub fn list(w: &mut Workspace, _: &Ctx, v: &Value) -> Result<Value, EngineError>
                 "post_probability": r.post.as_ref().map(|s| s.probability),
                 "bindings": r.bindings.iter().map(code_of).collect::<Vec<_>>(),
                 "impacts": r.pre.impacts.len(),
-                "expected_delay": days(expected.round().to_i64().unwrap_or(0), m),
+                "expected_delay": expected_days(expected, m),
                 "mitigations": state.mitigations.values().filter(|x| x.risk == r.id)
                     .map(|x| json!({ "kind": x.kind, "status": x.status, "cost": x.cost.to_string() })).collect::<Vec<_>>(),
             })
         })
         .collect();
     Ok(json!({ "risks": rows }))
+}
+
+/// Probability-weighted delay as working days with one decimal (`1.5d`),
+/// so the register column has one unit whatever the risk's size.
+fn expected_days(minutes: Decimal, mpd: i64) -> String {
+    let d = minutes
+        .checked_div(Decimal::from(mpd.max(1)))
+        .unwrap_or(Decimal::ZERO)
+        .round_dp(1)
+        .normalize();
+    format!("{d}d")
 }
 
 pub fn realize(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
@@ -742,7 +753,9 @@ pub fn attach(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineEr
         } else {
             Subgraph::default()
         },
-        cost: prop.cost,
+        // An explicit cost wins: a buffer or fast-track has no cost of its
+        // own, but the plan still costs money (site overheads, overtime).
+        cost: p.opt_money("cost")?.unwrap_or(prop.cost),
     };
     let mid = plan.id;
     cmds.push(Command::UpsertMitigation {

@@ -435,6 +435,52 @@ mod risk_physics {
     }
 
     #[test]
+    fn rsk_04_mitigation_costs() {
+        // Oracle (vault/05-Math/RISK-oracles.md, RSK-04 mitigation cost): planned
+        // 1000; preventive plan 300 is paid only post-mitigation; the
+        // contingent plan 50 is paid when its risk occurs (p = 1), in both
+        // modes. Pre = 1050, Post = 1350, every iteration.
+        let mut w = World::new();
+        w.add("A", fixed(10));
+        let a = w.id("A");
+        w.costs.insert(
+            a,
+            ActivityCost {
+                time_dependent: 0.0,
+                fixed: 1000.0,
+            },
+        );
+        let r1 = w.risk("R1", "0.5", vec![RiskBinding::Activity(a)], vec![]);
+        w.risks[0].post = Some(RiskState {
+            probability: Decimal::ZERO,
+            impacts: vec![],
+        });
+        w.mitigations.push(MitigationPlan {
+            id: MitigationId::new(),
+            risk: r1,
+            kind: MitigationKind::Preventive,
+            status: MitigationStatus::Accepted,
+            subgraph: Subgraph::default(),
+            cost: Money(Decimal::from(300)),
+        });
+        let r2 = w.risk("R2", "1", vec![RiskBinding::Activity(a)], vec![]);
+        w.contingent(r2, vec![], vec![]);
+        w.mitigations[1].cost = Money(Decimal::from(50));
+        let cost = |mode| {
+            let r = w
+                .model(mode)
+                .run(&SimConfig {
+                    iterations: 50,
+                    ..SimConfig::default()
+                })
+                .unwrap();
+            (r.cost.p10, r.cost.p80)
+        };
+        assert_eq!(cost(MitigationMode::Pre), (1050.0, 1050.0));
+        assert_eq!(cost(MitigationMode::Post), (1350.0, 1350.0));
+    }
+
+    #[test]
     fn rsk_03_cost_scales_with_duration_and_targets() {
         let mut w = World::new();
         w.add("A", fixed(10));

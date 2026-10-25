@@ -10,7 +10,8 @@ scorecard: RSK-01..15
 - **PERT:** α = 1+λ(m−o)/(p−o), β = 1+λ(p−m)/(p−o). The inverse CDF is tabulated at 4097 points by bisection on an exact incomplete beta (Lentz continued fraction + Lanczos ln Γ), then linearly interpolated.
 - **Risk order:** topological over secondary triggers (cycles rejected). The probability of a triggered risk = max(own, conditional) in that iteration.
 - **Contingent branches:** dormant nodes/edges, activated when their risk occurs; `replaces` edges are switched off.
-- **Cost per iteration:** Σ (time-dependent × sampled/base duration + fixed) × cost factors + cost adds.
+- **Cost per iteration:** Σ (time-dependent × sampled/base duration + fixed) × cost factors + cost adds + mitigation cost. A preventive plan's cost is paid in every iteration of a post-mitigation run (never pre); a contingent plan's cost is paid in the iterations where its risk occurs.
+- **Mitigation cost oracle (RSK-04):** A fixed cost 1000; R1 (p 0.5) with an accepted preventive plan 300; R2 (p 1) with a contingent plan 50 → pre 1050, post 1350 in every iteration.
 - **Quantiles:** nearest rank. Criticality = TF ≤ threshold in the iteration. Sensitivity = Spearman(duration, finish). Cruciality = CI × ρ.
 
 ## Analytic oracles (24 h calendar, days)

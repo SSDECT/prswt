@@ -159,6 +159,8 @@ struct SimRisk {
     activate_nodes: Vec<usize>,
     activate_edges: Vec<usize>,
     deactivate_edges: Vec<usize>,
+    /// Cost of the contingent plans that run when this risk occurs.
+    contingent_cost: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -182,6 +184,8 @@ pub struct SimModel {
     risk_order: Vec<usize>,
     groups: Vec<Group>,
     cost: Vec<ActivityCost>,
+    /// Cost of the preventive plans paid up front (post-mitigation only).
+    preventive_cost: f64,
     crit_threshold: i64,
     /// Problems found while compiling (e.g. risks without targets).
     pub warnings: Vec<String>,
@@ -619,6 +623,7 @@ impl SimModel {
                 activate_nodes: Vec::new(),
                 activate_edges: Vec::new(),
                 deactivate_edges: Vec::new(),
+                contingent_cost: 0.0,
             };
             for (mi, (nodes, edges, replaced)) in &branch_of {
                 if input.mitigations[*mi].risk != r.id {
@@ -630,6 +635,7 @@ impl SimModel {
                     .extend(edges.iter().filter_map(|id| edge_index.get(id).copied()));
                 sr.deactivate_edges
                     .extend(replaced.iter().filter_map(|id| edge_index.get(id).copied()));
+                sr.contingent_cost += dec_f64(input.mitigations[*mi].cost.0);
             }
             risks.push(sr);
         }
@@ -680,6 +686,19 @@ impl SimModel {
             .iter()
             .map(|n| input.costs.get(&n.id).copied().unwrap_or_default())
             .collect();
+        // A preventive plan is paid whether or not the risk occurs, so it
+        // only counts when the run assumes the plans are carried out.
+        let preventive_cost = match mode {
+            MitigationMode::Post => input
+                .mitigations
+                .iter()
+                .filter(|m| {
+                    m.kind == MitigationKind::Preventive && has_preventive.contains(&m.risk)
+                })
+                .map(|m| dec_f64(m.cost.0))
+                .sum(),
+            MitigationMode::Pre => 0.0,
+        };
         let crit_threshold = match cpm.settings.critical {
             CriticalDefinition::TotalFloatAtMost(x) => x.0,
             CriticalDefinition::LongestPath => 0,
@@ -695,6 +714,7 @@ impl SimModel {
             risk_order,
             groups,
             cost,
+            preventive_cost,
             crit_threshold,
             warnings,
         })
@@ -736,6 +756,7 @@ impl SimModel {
         let mut raised = vec![0.0f64; self.risks.len()];
         let mut cost_add = vec![0.0f64; dur.len()];
         let mut cost_mult = vec![1.0f64; dur.len()];
+        let mut mitigation_cost = self.preventive_cost;
         for &ri in &self.risk_order {
             let r = &self.risks[ri];
             let p = r.probability.max(raised[ri]);
@@ -743,6 +764,7 @@ impl SimModel {
                 continue;
             }
             occurred[ri] = true;
+            mitigation_cost += r.contingent_cost;
             for &(j, cp) in &r.triggers {
                 raised[j] = raised[j].max(cp);
             }
@@ -777,7 +799,7 @@ impl SimModel {
                 edge_active: &edge_active,
             })
             .map_err(EngineError::from)?;
-        let mut cost = 0.0;
+        let mut cost = mitigation_cost;
         for i in 0..dur.len() {
             if !node_active[i] {
                 continue;
