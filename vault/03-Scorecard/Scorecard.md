@@ -154,5 +154,5 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] SYNC-02 Offline-first sync: rebase with conflict reports, cached copies, background sync
 - [x] SYNC-03 Proposals from people and agents; Accept / Reject / Withdraw in the app
 - [x] SYNC-04 Live updates and presence (SSE), settings sync, read-only agent tokens
-- [ ] SYNC-05 Deployed to prswt.juz.ai (waiting for the go-ahead); multi-tenant Azure app for other organizations
+- [x] SYNC-05 Deployed to prswt.juz.ai (2026-10-25, Juz.ai tenant); other organizations need the multi-tenant switch in `docs/gaps.md`
 - [x] SYNC-06 Review fixes ([[fix-prompt-2026-10-25-cloud-review]]): failed syncs undone as a whole, ids kept by whole-entity writes, roles on every write, read-only tokens, owner claims, SSE limits, verified Microsoft emails, desktop streams stop, file dialogs in front

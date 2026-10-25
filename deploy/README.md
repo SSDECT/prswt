@@ -40,7 +40,7 @@ PRSWT serves HTTPS itself (`PRSWT_TLS_CERT`/`PRSWT_TLS_KEY`). The certificate is
 
 ## Operations
 - Logs: `docker compose logs -f server`.
-- Update: rebuild the web UI, copy the source, then `docker compose up -d --build`.
+- Update: rebuild the web UI, copy the source, then `docker compose up -d --build` in `deploy/`. Pack the source on Windows with `git -c core.autocrlf=false archive -o src.tar HEAD`: with CRLF line endings the migrations no longer match their recorded checksums and the server refuses to start.
 - Backup: `docker compose exec db pg_dump -U prswt prswt | gzip > /opt/backups/prswt-$(date +%F).sql.gz`.
 - Rollback: `docker compose down` (data stays in the `pgdata` volume), then redeploy the previous source.
 - Revoke access: remove the email from `PRSWT_ALLOWED_EMAILS` (or its domain from `PRSWT_ALLOWED_DOMAINS`) and remove it from the projects it was invited to, then restart. Sessions and tokens of removed users stop working immediately.
