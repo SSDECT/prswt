@@ -131,6 +131,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] FMT-02 MS Project MSPDI XML import/export
 - [x] DOC-01 ROADMAP.md, docs/architecture.md, target-app-parity.md, gaps.md, parity-checklist (generated)
 - [x] SKL-01 Evidence-verified `skills/prswt/SKILL.md`
+- [x] DOC-03 User guide in Russian (`docs/user-guide.md`): install, tabs, risks, what-if branches, cloud and sharing, agent tokens
 
 ## P10 — Server (prswt.juz.ai)
 - [x] SRV-01 `prswt-server`: API + MCP + sign-in in one axum binary
