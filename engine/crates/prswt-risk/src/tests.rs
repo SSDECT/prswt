@@ -11,7 +11,7 @@ use prswt_core::ids::{
 use prswt_core::model::{
     Activity, ActivityKind, Anchor, CalendarDef, CorrelationGroup, Estimate, ImpactMode,
     ImpactProfile, MitigationKind, MitigationPlan, MitigationStatus, PercentCompleteType, Project,
-    RelationKind, Relationship, Risk, RiskBinding, RiskKind, RiskState, RiskStatus,
+    Quantity, RelationKind, Relationship, Risk, RiskBinding, RiskKind, RiskState, RiskStatus,
     ScheduleSettings, SecondaryTrigger, Subgraph, UncertainVarRef, WbsNode, WorkWeek,
 };
 use prswt_core::{ErrorCode, Instant, Money, WorkMinutes};
@@ -269,6 +269,19 @@ mod invariants {
     }
 
     #[test]
+    fn rsk_09_cancel_stops_the_run() {
+        let mut w = World::new();
+        w.add("A", tri(1, 2, 3));
+        let m = w.model(MitigationMode::Post);
+        let stop = std::sync::atomic::AtomicBool::new(true);
+        let e = m.run_cancellable(&SimConfig::default(), &stop).unwrap_err();
+        assert_eq!(e.code, ErrorCode::Validation);
+        assert!(e.message.contains("cancelled"));
+        stop.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(m.run_cancellable(&SimConfig::default(), &stop).is_ok());
+    }
+
+    #[test]
     fn rsk_09_convergence_stops_early() {
         let mut w = World::new();
         w.add("A", fixed(5));
@@ -396,6 +409,39 @@ mod risk_physics {
         );
         let r = w.run(50);
         assert_eq!((r.finish.p50 - w.start().0 as f64) / DAYF, 11.0);
+    }
+
+    /// S(1) → A(10) → E(1); the fallback S → X(2) → E takes over A, so the
+    /// finish is 1 + 2 + 1 = 4 d, not A's open end at 11 d.
+    #[test]
+    fn rsk_05_alternative_path_drops_the_replaced_activity() {
+        let mut w = World::new();
+        w.add("S", fixed(1));
+        w.add("A", fixed(10));
+        w.add("E", fixed(1));
+        w.fs("S", "A");
+        w.fs("A", "E");
+        let out = w.rels[1].id;
+        let (s, a, e) = (w.id("S"), w.id("A"), w.id("E"));
+        let rid = w.risk("R", "1", vec![RiskBinding::Activity(a)], vec![]);
+        let x = w.make("X", fixed(2));
+        let anchor = |pred, succ, replaces| Anchor {
+            pred,
+            succ,
+            kind: RelationKind::FS,
+            lag: WorkMinutes(0),
+            replaces,
+        };
+        w.contingent(
+            rid,
+            vec![x.clone()],
+            vec![anchor(s, x.id, None), anchor(x.id, e, Some(out))],
+        );
+        let open_end = w.run(20);
+        assert_eq!((open_end.finish.p50 - w.start().0 as f64) / DAYF, 11.0);
+        w.mitigations[0].subgraph.replaces = vec![a];
+        let r = w.run(20);
+        assert_eq!((r.finish.p50 - w.start().0 as f64) / DAYF, 4.0);
     }
 
     #[test]
@@ -540,6 +586,48 @@ mod risk_physics {
         let r = w2.run(10);
         assert_eq!((r.finish.p50 - w.start().0 as f64) / DAYF, 8.0);
     }
+
+    /// Oracle: capacity c ~ Tri(0.5, 1, 1) ⇒ duration 10/c days,
+    /// E[1/c] = ∫ 8(c − ½)/c dc over [½, 1] = 4(1 − ln 2) ≈ 1.2274.
+    #[test]
+    fn rsk_03_uncertain_degradation_divides_by_capacity() {
+        let mut w = World::new();
+        w.add("A", fixed(10));
+        let far = Instant(w.start().0 + 1000 * DAY);
+        let factor = Quantity::Triangular {
+            o: Decimal::from_str("0.5").unwrap(),
+            m: Decimal::ONE,
+            p: Decimal::ONE,
+        };
+        w.risk(
+            "R1",
+            "1",
+            vec![RiskBinding::Activity(w.id("A"))],
+            vec![ImpactProfile::ResourceDegradation {
+                resource: None,
+                factor,
+                window_start: w.start(),
+                window_end: far,
+            }],
+        );
+        let m = w.model(MitigationMode::Post);
+        assert!(m.warnings.is_empty(), "{:?}", m.warnings);
+        let r = m
+            .run(&SimConfig {
+                iterations: 20_000,
+                ..SimConfig::default()
+            })
+            .unwrap();
+        let off = |x: f64| (x - w.start().0 as f64) / DAYF;
+        let expected = 10.0 * 4.0 * (1.0 - std::f64::consts::LN_2);
+        assert!(
+            (off(r.finish.mean) - expected).abs() < 0.05,
+            "{}",
+            off(r.finish.mean)
+        );
+        assert!(off(r.finish.min) >= 10.0 - 1e-6);
+        assert!(off(r.finish.max) <= 20.0 + 1e-6);
+    }
 }
 
 // ─────────────────────────────── helpers ───────────────────────────────
@@ -665,6 +753,10 @@ impl World {
             actual_finish: None,
             pct_complete: Decimal::ZERO,
             pct_type: PercentCompleteType::Duration,
+            expected_finish: None,
+            suspend: None,
+            resume: None,
+            leveled_start: None,
         }
     }
 
@@ -732,6 +824,7 @@ impl World {
                 activities,
                 links: Vec::new(),
                 anchors,
+                replaces: Vec::new(),
             },
             cost: Money::ZERO,
         });
@@ -944,6 +1037,12 @@ mod realization {
         assert_eq!(p.triggered, vec![(r2, Decimal::new(7, 1))]);
         assert_eq!(p.add_activities.len(), 1);
         assert_eq!(p.remove_relationships, vec![replaced]);
+        let mut taken_over = w.clone();
+        taken_over.mitigations[0].subgraph.replaces = vec![a];
+        let q = plan(&taken_over, &s, r1, &RealizationChoice::MostLikely).unwrap();
+        let abandoned: Vec<_> = q.remaining_changes.iter().filter(|c| c.0 == a).collect();
+        assert_eq!(abandoned.len(), 1);
+        assert_eq!(abandoned[0].2, WorkMinutes(0), "replaced work is abandoned");
         let (mut acts, mut rels, mut exp) = (w.acts.clone(), w.rels.clone(), Vec::new());
         p.apply(&mut acts, &mut rels, &mut exp, &mut [], &mut w.risks);
         assert_eq!(w.risks[0].status, RiskStatus::Active);
@@ -1078,6 +1177,7 @@ mod mitigation_proposals {
                 .iter()
                 .any(|an| an.replaces == Some(w.rels[0].id) && an.succ == b)
         );
+        assert_eq!(p.subgraph.replaces, vec![a, b]);
     }
 }
 

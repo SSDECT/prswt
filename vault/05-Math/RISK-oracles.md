@@ -30,3 +30,15 @@ A(5) → B(5) alongside D(9). Realizing "D +Tri(1,3,6)" at most-likely gives D =
 
 ## Performance
 5k activities × 5k iterations ≈ 1.5 s (release, 8+ threads); target < 10 s.
+
+## RSK-16: uncertain resource degradation
+The capacity share is c ~ Tri(0.5, 1, 1), so its density is f(c) = 8(c − ½) on [½, 1]. The duration becomes d / c.
+- E[1/c] = ∫ 8(c − ½)/c dc = 8[(1 − ½) − ½ ln 2] = 4(1 − ln 2) ≈ 1.2274.
+- For A = 10 d with the risk certain: the mean finish is 12.27 d, the minimum is 10 d and the maximum is 20 d. A tolerance of 0.05 d covers 20 000 iterations.
+- The old sampling, which multiplied the duration by c, gave a mean of 8.33 d. It shortened the work when it should lengthen it.
+
+## RSK-16: alternative path takes over the activity
+The network is S(1) → A(10) → E(1). The fallback S → X(2) → E replaces A → E, and the risk is certain.
+- If A stays in the network, it is an open end and the finish is 1 + 10 = 11 d.
+- With `replaces = [A]`, A is inactive in the iteration and the finish is 1 + 2 + 1 = 4 d.
+- Realizing the risk cuts A's remaining duration to 0.

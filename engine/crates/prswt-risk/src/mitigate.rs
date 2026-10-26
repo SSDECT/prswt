@@ -285,6 +285,7 @@ pub fn propose(
                     });
                 }
                 p.subgraph.activities.push(alt);
+                p.subgraph.replaces.push(a.id);
             }
             p.rationale = "fallback branch activated only if the risk occurs".into();
         }

@@ -811,7 +811,7 @@ fn run_branch(
     let state = head(w, pid, bid)?.clone();
     let sn = state.snapshot();
     let model = SimModel::compile(&sim_input(&state, &sn, &costs), mode)?;
-    let r = model.run(cfg)?;
+    let r = model.run_cancellable(cfg, w.cancel_flag())?;
     Ok((r, model, state))
 }
 

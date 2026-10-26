@@ -7,6 +7,7 @@
 //! that share an entity see the same draws (common random numbers).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use prswt_core::ids::{ActivityId, RelationshipId, RiskId};
 use prswt_core::model::{
@@ -137,6 +138,8 @@ enum Effect {
     DurationFactor,
     CostAdd,
     CostFactor,
+    /// Sampled remaining capacity share `c`; duration × 1/max(c, floor).
+    CapacityShare,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +162,8 @@ struct SimRisk {
     activate_nodes: Vec<usize>,
     activate_edges: Vec<usize>,
     deactivate_edges: Vec<usize>,
+    /// Main-network activities a branch takes over.
+    deactivate_nodes: Vec<usize>,
     /// Cost of the contingent plans that run when this risk occurs.
     contingent_cost: f64,
 }
@@ -305,7 +310,12 @@ impl SimModel {
         // Contingent branches become dormant nodes/edges.
         let mut branch_of: HashMap<
             usize,
-            (Vec<ActivityId>, Vec<RelationshipId>, Vec<RelationshipId>),
+            (
+                Vec<ActivityId>,
+                Vec<RelationshipId>,
+                Vec<RelationshipId>,
+                Vec<ActivityId>,
+            ),
         > = HashMap::new();
         for (mi, mp) in input.mitigations.iter().enumerate() {
             let usable = matches!(
@@ -339,7 +349,7 @@ impl SimModel {
                 });
                 replaced.extend(an.replaces);
             }
-            branch_of.insert(mi, (nodes, edges, replaced));
+            branch_of.insert(mi, (nodes, edges, replaced, mp.subgraph.replaces.clone()));
         }
 
         let input2 = ScheduleInput {
@@ -580,18 +590,7 @@ impl SimModel {
                             .filter(|&i| det.es[i] <= *window_end && det.ef[i] >= *window_start)
                             .filter(|i| schedulable(i))
                             .collect();
-                        // Capacity share c ⇒ duration × 1/c.
-                        let inv = match builder.quantity(factor) {
-                            Dist::Fixed(c) => Dist::Fixed(1.0 / c.max(MIN_CAPACITY_FACTOR)),
-                            other => {
-                                warnings.push(format!(
-                                    "risk {}: uncertain degradation factor sampled as capacity share",
-                                    r.code
-                                ));
-                                other
-                            }
-                        };
-                        (Effect::DurationFactor, inv, hit)
+                        (Effect::CapacityShare, builder.quantity(factor), hit)
                     }
                 };
                 impacts.push(SimImpact {
@@ -623,9 +622,10 @@ impl SimModel {
                 activate_nodes: Vec::new(),
                 activate_edges: Vec::new(),
                 deactivate_edges: Vec::new(),
+                deactivate_nodes: Vec::new(),
                 contingent_cost: 0.0,
             };
-            for (mi, (nodes, edges, replaced)) in &branch_of {
+            for (mi, (nodes, edges, replaced, gone)) in &branch_of {
                 if input.mitigations[*mi].risk != r.id {
                     continue;
                 }
@@ -635,6 +635,8 @@ impl SimModel {
                     .extend(edges.iter().filter_map(|id| edge_index.get(id).copied()));
                 sr.deactivate_edges
                     .extend(replaced.iter().filter_map(|id| edge_index.get(id).copied()));
+                sr.deactivate_nodes
+                    .extend(gone.iter().filter_map(|id| cpm.index.get(id).copied()));
                 sr.contingent_cost += dec_f64(input.mitigations[*mi].cost.0);
             }
             risks.push(sr);
@@ -776,6 +778,10 @@ impl SimModel {
                         Effect::DurationFactor => {
                             dur[t] = to_minutes(int_f64(dur[t]) * x.max(0.0));
                         }
+                        Effect::CapacityShare => {
+                            let c = x.max(MIN_CAPACITY_FACTOR);
+                            dur[t] = to_minutes(int_f64(dur[t]) / c);
+                        }
                         Effect::CostAdd => cost_add[t] += x,
                         Effect::CostFactor => cost_mult[t] *= x.max(0.0),
                     }
@@ -789,6 +795,9 @@ impl SimModel {
             }
             for &e in &r.deactivate_edges {
                 edge_active[e] = false;
+            }
+            for &i in &r.deactivate_nodes {
+                node_active[i] = false;
             }
         }
         let dates = self
@@ -827,6 +836,17 @@ impl SimModel {
 
     /// Runs the simulation. Deterministic for a given model, seed and config.
     pub fn run(&self, cfg: &SimConfig) -> Result<SimResult, EngineError> {
+        self.run_cancellable(cfg, &AtomicBool::new(false))
+    }
+
+    /// [`SimModel::run`] that stops with `Validation` ("cancelled") once
+    /// `cancel` is set; it is checked between batches, so a stop takes at
+    /// most one batch.
+    pub fn run_cancellable(
+        &self,
+        cfg: &SimConfig,
+        cancel: &AtomicBool,
+    ) -> Result<SimResult, EngineError> {
         let total = cfg.iterations.clamp(1, MAX_ITERATIONS);
         let batch = cfg.batch.clamp(50, total.max(50));
         let keep_cap = MAX_SENSITIVITY_CELLS / self.vars.len().max(1);
@@ -836,6 +856,9 @@ impl SimModel {
         let mut converged = false;
         let mut prev: Option<(i64, i64, f64)> = None;
         while u32::try_from(all.len()).unwrap_or(u32::MAX) < total {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(EngineError::validation("risk analysis cancelled"));
+            }
             let start = u64::try_from(all.len()).unwrap_or(0);
             let end = (start + u64::from(batch)).min(u64::from(total));
             let chunk = run_range(self, cfg.seed, start, end, keep_cap)?;

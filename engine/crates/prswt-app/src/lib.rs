@@ -204,6 +204,9 @@ pub struct Workspace {
     pub on_create: Option<OnCreate>,
     /// SYNC-01: local copies of cloud projects and how far they are synced.
     pub(crate) sync: BTreeMap<ProjectId, prswt_state::SyncLink>,
+    /// Set from another thread to stop a running risk analysis; cleared
+    /// when the next command starts.
+    cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl std::fmt::Debug for Workspace {
@@ -228,12 +231,26 @@ impl Workspace {
             on_event: None,
             on_create: None,
             sync: BTreeMap::new(),
+            cancel: Arc::default(),
         }
+    }
+
+    /// Handle that stops the running risk analysis when set to `true`
+    /// (take it before the command starts: the workspace is locked then).
+    pub fn cancel_handle(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.cancel.clone()
+    }
+
+    /// Whether a stop was requested for the command in progress.
+    pub(crate) fn cancel_flag(&self) -> &std::sync::atomic::AtomicBool {
+        &self.cancel
     }
 
     /// Runs command `id`. Escaped panics are caught and the workspace is
     /// restored (never-crash guard); the error says what happened.
     pub fn execute(&mut self, ctx: &Ctx, id: &str, params: &Value) -> Result<Value, EngineError> {
+        self.cancel
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         let spec = catalog()
             .iter()
             .find(|c| c.id == id)

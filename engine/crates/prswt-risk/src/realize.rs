@@ -239,7 +239,21 @@ pub fn plan_realization(
             });
             plan.remove_relationships.extend(an.replaces);
         }
+        // The branch takes over: the replaced work is abandoned (zero
+        // remaining) so it no longer counts toward the finish.
+        for &id in &m.subgraph.replaces {
+            let open = s
+                .index_of(id)
+                .is_some_and(|i| s.model.nodes[i].status != prswt_cpm::Status::Completed);
+            if !open {
+                continue;
+            }
+            plan.remaining_changes.retain(|c| c.0 != id);
+            plan.remaining_changes
+                .push((id, WorkMinutes(current(id)), WorkMinutes(0)));
+        }
     }
+    plan.remaining_changes.sort_by_key(|c| c.0);
     for t in &risk.secondary_triggers {
         if let Some(target) = input.risks.iter().find(|r| r.id == t.target) {
             plan.triggered.push((
