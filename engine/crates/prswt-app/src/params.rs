@@ -12,6 +12,10 @@ use serde_json::{Map, Value};
 /// Longest string accepted for names, codes and free text.
 pub const MAX_TEXT: usize = 4_000;
 
+/// Longest identifier (activity, resource, risk or WBS code); P6 allows 40
+/// characters for an activity ID, imports may bring longer ones.
+pub const MAX_CODE: usize = 100;
+
 /// Borrowed view of a JSON params object with typed, validating getters.
 #[derive(Debug, Clone, Copy)]
 pub struct P<'a>(pub &'a Map<String, Value>);
@@ -39,6 +43,21 @@ impl<'a> P<'a> {
     pub fn str(&self, k: &str) -> Result<&'a str, EngineError> {
         self.opt_str(k)?
             .ok_or_else(|| EngineError::validation(format!("missing required parameter `{k}`")))
+    }
+
+    /// Required identifier: not blank, at most [`MAX_CODE`] characters, no
+    /// control characters. Surrounding spaces are not part of it.
+    pub fn code(&self, k: &str) -> Result<&'a str, EngineError> {
+        let c = self.str(k)?.trim();
+        if c.is_empty() {
+            return Err(EngineError::validation(format!("`{k}` must not be empty")));
+        }
+        if c.chars().count() > MAX_CODE || c.chars().any(char::is_control) {
+            return Err(EngineError::validation(format!(
+                "`{k}` must be at most {MAX_CODE} characters without control characters"
+            )));
+        }
+        Ok(c)
     }
 
     /// Optional string parameter (length-limited).

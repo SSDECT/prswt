@@ -119,8 +119,9 @@ fn parse_constraint(p: &P<'_>) -> Result<Option<Constraint>, EngineError> {
     };
     let c = P(m);
     let kind = match c.str("kind")? {
-        "asap" => ConstraintKind::AsSoonAsPossible,
-        "alap" => ConstraintKind::AsLateAsPossible,
+        // Short P6 names, and the names the engine itself reports.
+        "asap" | "as_soon_as_possible" => ConstraintKind::AsSoonAsPossible,
+        "alap" | "as_late_as_possible" => ConstraintKind::AsLateAsPossible,
         "snet" | "start_no_earlier_than" => ConstraintKind::StartNoEarlierThan,
         "snlt" | "start_no_later_than" => ConstraintKind::StartNoLaterThan,
         "fnet" | "finish_no_earlier_than" => ConstraintKind::FinishNoEarlierThan,
@@ -231,8 +232,8 @@ pub fn wbs_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineE
     let node = WbsNode {
         id: WbsId::new(),
         parent: Some(parent),
-        code: p.str("code")?.to_owned(),
-        name: p.opt_str("name")?.unwrap_or(p.str("code")?).to_owned(),
+        code: p.code("code")?.to_owned(),
+        name: p.opt_str("name")?.unwrap_or(p.code("code")?).to_owned(),
         obs: None,
         sort_key: i64::try_from(state.wbs.len()).unwrap_or(0),
     };
@@ -245,7 +246,7 @@ pub fn activity_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, En
     let p = P::of(v)?;
     let (pid, bid) = w.target(&p)?;
     let state = head(w, pid, bid)?;
-    let code = p.str("code")?.to_owned();
+    let code = p.code("code")?.to_owned();
     if state.activities.values().any(|a| a.code == code) {
         return Err(EngineError::validation(format!(
             "activity code `{code}` already exists"
@@ -592,7 +593,7 @@ pub fn resource_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, En
     let p = P::of(v)?;
     let (pid, bid) = w.target(&p)?;
     let state = head(w, pid, bid)?;
-    let code = p.str("code")?.to_owned();
+    let code = p.code("code")?.to_owned();
     if state.resources.values().any(|r| r.code == code) {
         return Err(EngineError::validation(format!(
             "resource `{code}` already exists"

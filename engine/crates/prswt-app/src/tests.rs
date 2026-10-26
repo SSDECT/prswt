@@ -423,6 +423,12 @@ mod workflows {
                 "activity.add",
                 json!({ "code": "C", "duration": "2d", "predecessors": ["A", "B"] }),
             ),
+            // The report must put this milestone where the next run does
+            // (Fri 17:00), not at the next morning.
+            (
+                "activity.add",
+                json!({ "code": "END", "duration": "0d", "kind": "finish_milestone", "predecessors": ["C"] }),
+            ),
             (
                 "resource.add",
                 json!({ "code": "R", "max_units": 1, "rate": 100 }),
@@ -607,6 +613,26 @@ mod workflows {
             .execute(&h, "activity.add", &json!({ "code": 7 }))
             .unwrap_err();
         assert!(e.message.contains("string"));
+        // Found by the scenario run: blank codes were accepted, and the
+        // constraint names the engine reports were refused as input.
+        for code in ["", "   ", "A\u{0}B", &"x".repeat(101)] {
+            let e = w
+                .execute(
+                    &h,
+                    "activity.add",
+                    &json!({ "code": code, "duration": "1d" }),
+                )
+                .unwrap_err();
+            assert_eq!(e.code, ErrorCode::Validation, "{code:?}");
+        }
+        for (code, kind) in [("L", "as_late_as_possible"), ("S", "as_soon_as_possible")] {
+            w.execute(
+                &h,
+                "activity.add",
+                &json!({ "code": code, "duration": "1d", "constraint": { "kind": kind } }),
+            )
+            .unwrap();
+        }
         let list = w
             .execute(&h, "commands.list", &json!({ "search": "sandbox" }))
             .unwrap();

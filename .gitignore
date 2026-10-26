@@ -1,6 +1,7 @@
 /engine/target/
 # Second build directory (release build while the MCP servers hold target/)
 /engine/target-st/
+__pycache__/
 .env
 .env.*
 !.env.example

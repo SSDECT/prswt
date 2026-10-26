@@ -224,7 +224,7 @@ fn build_risk(
     p: &P<'_>,
 ) -> Result<Risk, EngineError> {
     let state = head(w, pid, bid)?;
-    let code = p.str("code")?.to_owned();
+    let code = p.code("code")?.to_owned();
     if state.risks.values().any(|r| r.code == code) {
         return Err(EngineError::validation(format!(
             "risk `{code}` already exists"
