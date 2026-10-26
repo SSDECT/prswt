@@ -36,7 +36,7 @@ Claude Code picks up the project-scoped MCP servers in `.mcp.json` (`prswt`, `pr
 PRSWT is written with [Claude Code](https://claude.com/claude-code) (Anthropic) under the direction of its author, who sets the goals and requirements, reviews the results and tests the app. Commits made this way carry a `Co-Authored-By: Claude` line, and the original brief is in [promt.md](promt.md). Every change passes the same gate as hand-written code: formatting, clippy, the test suite with hand-worked oracles in `vault/05-Math/`, rustdoc and license checks.
 
 ## Code signing policy
-Windows releases are to be signed with free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) (application pending); macOS releases are signed with the author's Apple Developer ID and notarized. Only packages built by the `desktop-release` GitHub workflow from this repository are signed.
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) (Windows; application pending). macOS packages are signed with the author's Apple Developer ID and notarized. Only packages built by the `desktop-release` GitHub workflow from this repository are signed, and every release is approved by hand before signing.
 
 - Committers and reviewers: [SSDECT](https://github.com/SSDECT) (project owner), with Claude Code as a co-author under the owner's review
 - Approvers: [SSDECT](https://github.com/SSDECT)
