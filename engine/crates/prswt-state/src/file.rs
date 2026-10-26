@@ -72,6 +72,13 @@ pub struct FileBranch {
     pub base: ProjectState,
     /// Events since the fork, versions 1, 2, … in order.
     pub events: Vec<Event>,
+    /// Versions that Undo would revert, oldest first (gap 9: history
+    /// survives save and open). Missing in older files = empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub undo: Vec<u64>,
+    /// Versions that Redo would re-apply, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub redo: Vec<u64>,
 }
 
 impl Repo {
@@ -83,6 +90,8 @@ impl Repo {
                 meta: b.meta.clone(),
                 base: b.base.clone(),
                 events: b.events.clone(),
+                undo: b.undo_stack().to_vec(),
+                redo: b.redo_stack().to_vec(),
             })
             .collect();
         branches.sort_by_key(|b| b.meta.id != self.live);
@@ -188,6 +197,7 @@ fn restore_branch(
             EngineError::validation(format!("project file event log is damaged: {}", e.message))
         })?;
     }
+    repo.restore_history(id, b.undo, b.redo)?;
     let head = &repo.branch(id)?.head;
     if repo.branch(id)?.meta.version != declared {
         return Err(EngineError::new(

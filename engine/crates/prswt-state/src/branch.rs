@@ -197,6 +197,16 @@ impl Branch {
     pub fn history_depth(&self) -> (usize, usize) {
         (self.undo.len(), self.redo.len())
     }
+
+    /// Versions Undo would revert, oldest first.
+    pub fn undo_stack(&self) -> &[u64] {
+        &self.undo
+    }
+
+    /// Versions Redo would re-apply, oldest first.
+    pub fn redo_stack(&self) -> &[u64] {
+        &self.redo
+    }
 }
 
 /// All branches of one project.
@@ -581,6 +591,34 @@ impl Repo {
         b.meta.version = version;
         b.undo.clear();
         b.redo.clear();
+        Ok(())
+    }
+
+    /// Gap 9: puts back undo and redo stacks read from a project file.
+    /// Every version must name an event of this branch, appear once and fit
+    /// [`UNDO_DEPTH`]; otherwise `Validation` (a damaged or edited file).
+    pub fn restore_history(
+        &mut self,
+        id: BranchId,
+        undo: Vec<u64>,
+        redo: Vec<u64>,
+    ) -> Result<(), EngineError> {
+        let b = self.branch_mut(id)?;
+        let mut seen = std::collections::BTreeSet::new();
+        for v in undo.iter().chain(&redo) {
+            if b.event(*v).is_none() || !seen.insert(*v) {
+                return Err(EngineError::validation(format!(
+                    "project file undo history names event {v}, which is missing or repeated"
+                )));
+            }
+        }
+        if undo.len() > UNDO_DEPTH || redo.len() > UNDO_DEPTH {
+            return Err(EngineError::validation(
+                "project file undo history is too long",
+            ));
+        }
+        b.undo = undo;
+        b.redo = redo;
         Ok(())
     }
 

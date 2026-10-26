@@ -313,7 +313,15 @@ mod files {
         }
         assert_eq!(dur(&back, sb, a), 7);
         assert_eq!(dur(&back, live, a), 3);
-        assert_eq!(back.branch(live).unwrap().history_depth(), (0, 0));
+        for b in repo.branches() {
+            let r = back.branch(b.meta.id).unwrap();
+            assert_eq!(r.history_depth(), b.history_depth(), "gap 9: history kept");
+        }
+        let mut back = back;
+        back.undo(sb, agent(), T0).unwrap();
+        assert_eq!(dur(&back, sb, a), 3, "undo works after reopening");
+        back.redo(sb, agent(), T0).unwrap();
+        assert_eq!(dur(&back, sb, a), 7);
     }
 
     #[test]
@@ -356,6 +364,12 @@ mod files {
         f.branches[0].base.activities.clear();
         f.branches[0].base.wbs.clear();
         reject(f, "base fails integrity");
+        let mut f = good.clone();
+        f.branches[0].undo = vec![999];
+        reject(f, "undo names a missing event");
+        let mut f = good.clone();
+        f.branches[0].undo = vec![1, 1];
+        reject(f, "undo repeats an event");
         assert!(Repo::from_file(good).is_ok_and(|r| r.live == live));
     }
 }
@@ -516,6 +530,10 @@ fn act(repo: &Repo, code: &str) -> Activity {
         actual_finish: None,
         pct_complete: Decimal::ZERO,
         pct_type: PercentCompleteType::Duration,
+        expected_finish: None,
+        suspend: None,
+        resume: None,
+        leveled_start: None,
     }
 }
 
