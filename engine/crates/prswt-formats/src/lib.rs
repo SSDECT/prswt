@@ -211,6 +211,9 @@ pub fn export(state: &ProjectState) -> String {
             "cstr_type",
             "cstr_date",
             "phys_complete_pct",
+            "expect_end_date",
+            "suspend_date",
+            "resume_date",
         ],
         state
             .activities
@@ -239,6 +242,9 @@ pub fn export(state: &ProjectState) -> String {
                     ctype,
                     cdate,
                     a.pct_complete.to_string(),
+                    a.expected_finish.map(date).unwrap_or_default(),
+                    a.suspend.map(date).unwrap_or_default(),
+                    a.resume.map(date).unwrap_or_default(),
                 ]
             })
             .collect::<Vec<_>>(),
@@ -352,7 +358,8 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
     let xer_pid = proj.get(prow, "proj_id").to_owned();
     let in_project = |tb: &Table, row: &[String]| {
         let v = tb.get(row, "proj_id");
-        v.is_empty() || v == xer_pid
+        // Some exporters leave PROJECT.proj_id blank: then every row counts.
+        v.is_empty() || xer_pid.is_empty() || v == xer_pid
     };
 
     // Calendars → closest preset.
@@ -392,8 +399,28 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
         .copied()
         .unwrap_or(calendars[0].id);
 
+    // Real files leave plan_start_date out now and then; fall back to the
+    // data date, then to the earliest date on any activity.
+    let tk = t("TASK");
+    let earliest = || {
+        tk.rows
+            .iter()
+            .filter(|r| in_project(tk, r))
+            .flat_map(|r| {
+                ["act_start_date", "early_start_date", "target_start_date"]
+                    .map(|c| parse_date(tk.get(r, c)))
+            })
+            .flatten()
+            .min()
+    };
     let start = parse_date(proj.get(prow, "plan_start_date"))
-        .ok_or_else(|| EngineError::validation("PROJECT.plan_start_date missing or invalid"))?;
+        .or_else(|| parse_date(proj.get(prow, "last_recalc_date")))
+        .or_else(earliest)
+        .ok_or_else(|| {
+            EngineError::validation(
+                "PROJECT.plan_start_date missing or invalid and no activity has a date",
+            )
+        })?;
     let project = Project {
         id: ProjectId::new(),
         portfolio: None,
@@ -480,7 +507,6 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
     }
 
     // Activities.
-    let tk = t("TASK");
     let mut act_ids: HashMap<String, ActivityId> = HashMap::new();
     for r in tk.rows.iter().filter(|r| in_project(tk, r)) {
         let id = ActivityId::new();
@@ -532,6 +558,10 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
                     .unwrap_or(Decimal::ZERO)
                     .clamp(Decimal::ZERO, Decimal::ONE_HUNDRED),
                 pct_type: PercentCompleteType::Physical,
+                expected_finish: parse_date(tk.get(r, "expect_end_date")),
+                suspend: parse_date(tk.get(r, "suspend_date")),
+                resume: parse_date(tk.get(r, "resume_date")),
+                leveled_start: None,
             }),
         });
     }
@@ -563,16 +593,55 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
         });
     }
 
-    // Resources and assignments.
+    // Resources and assignments. P6 keeps prices and limits in RSRCRATE
+    // (dated, five price types); RSRC.cost_per_qty is the older single rate.
     let rs = t("RSRC");
+    let rr = t("RSRCRATE");
+    let mut rate_rows: HashMap<&str, Vec<&Vec<String>>> = HashMap::new();
+    for r in &rr.rows {
+        rate_rows.entry(rr.get(r, "rsrc_id")).or_default().push(r);
+    }
     let mut res_ids: HashMap<String, ResourceId> = HashMap::new();
     for r in &rs.rows {
         let id = ResourceId::new();
         res_ids.insert(rs.get(r, "rsrc_id").to_owned(), id);
-        let rate = rs
-            .get(r, "cost_per_qty")
-            .parse::<Decimal>()
-            .unwrap_or(Decimal::ZERO);
+        let price = |v: &str| v.parse::<Decimal>().ok().map(Money);
+        let single = price(rs.get(r, "cost_per_qty")).unwrap_or(Money::ZERO);
+        let max_units = rs.get(r, "max_qty_per_hr").parse().unwrap_or(Decimal::ONE);
+        let mut dated: Vec<(Instant, [Money; 5], Decimal)> = rate_rows
+            .get(rs.get(r, "rsrc_id"))
+            .into_iter()
+            .flatten()
+            .map(|row| {
+                let first = price(rr.get(row, "cost_per_qty")).unwrap_or(single);
+                let mut five = [first; 5];
+                for (k, col) in [
+                    "cost_per_qty2",
+                    "cost_per_qty3",
+                    "cost_per_qty4",
+                    "cost_per_qty5",
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if let Some(v) = price(rr.get(row, col)) {
+                        five[k + 1] = v;
+                    }
+                }
+                (
+                    parse_date(rr.get(row, "start_date")).unwrap_or(Instant::MIN),
+                    five,
+                    rr.get(row, "max_qty_per_hr").parse().unwrap_or(max_units),
+                )
+            })
+            .collect();
+        dated.sort_by_key(|d| d.0);
+        if let Some(first) = dated.first_mut() {
+            // The earliest rate also covers work before its start date.
+            first.0 = Instant::MIN;
+        } else {
+            dated.push((Instant::MIN, [single; 5], max_units));
+        }
         cmds.push(Command::UpsertResource {
             resource: Resource {
                 id,
@@ -587,14 +656,20 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
                     .get(rs.get(r, "clndr_id"))
                     .copied()
                     .unwrap_or(default_cal),
-                max_units: vec![Effective {
-                    from: Instant::MIN,
-                    value: rs.get(r, "max_qty_per_hr").parse().unwrap_or(Decimal::ONE),
-                }],
-                rates: vec![Effective {
-                    from: Instant::MIN,
-                    value: [Money(rate); 5],
-                }],
+                max_units: dated
+                    .iter()
+                    .map(|d| Effective {
+                        from: d.0,
+                        value: d.2,
+                    })
+                    .collect(),
+                rates: dated
+                    .iter()
+                    .map(|d| Effective {
+                        from: d.0,
+                        value: d.1,
+                    })
+                    .collect(),
                 unit_of_measure: None,
                 obs: None,
             },
@@ -618,12 +693,18 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
                     .get(r, "target_qty_per_hr")
                     .parse()
                     .unwrap_or(Decimal::ONE),
-                rate_type: 0,
+                rate_type: match ta.get(r, "rate_type") {
+                    "COST_PER_QTY2" => 1,
+                    "COST_PER_QTY3" => 2,
+                    "COST_PER_QTY4" => 3,
+                    "COST_PER_QTY5" => 4,
+                    _ => 0,
+                },
                 cost_account: None,
                 curve: SpreadCurve::Uniform,
-                actual_units: Decimal::ZERO,
-                actual_cost: Money::ZERO,
-                remaining_units: None,
+                actual_units: dec(ta.get(r, "act_reg_qty")) + dec(ta.get(r, "act_ot_qty")),
+                actual_cost: Money(dec(ta.get(r, "act_reg_cost")) + dec(ta.get(r, "act_ot_cost"))),
+                remaining_units: ta.get(r, "remain_qty").parse().ok(),
             },
         });
     }
@@ -676,9 +757,19 @@ fn parse_date(s: &str) -> Option<Instant> {
         return None;
     }
     chrono::NaiveDateTime::parse_from_str(s, XER_DATE)
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
+        .or_else(|_| {
+            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map(|d| d.and_time(chrono::NaiveTime::MIN))
+        })
         .ok()
         .map(Instant::from_datetime)
         .or_else(|| s.parse::<Instant>().ok())
+}
+
+/// A decimal cell; blank or malformed counts as zero.
+fn dec(s: &str) -> Decimal {
+    s.trim().parse().unwrap_or(Decimal::ZERO)
 }
 
 fn hours(minutes: i64) -> String {

@@ -40,6 +40,77 @@ fn fmt_01_import_oracle_file() {
 }
 
 #[test]
+fn fmt_01_tolerates_files_from_other_exporters() {
+    // Real files: PROJECT without plan_start_date and with a blank proj_id,
+    // dates carrying seconds.
+    let text = SAMPLE
+        .replace(
+            "%F\tproj_id\tproj_short_name\tplan_start_date\tlast_recalc_date\tclndr_id\n\
+             %R\t10\tDEMO\t2027-03-01 08:00\t2027-03-01 08:00\t5",
+            "%F\tproj_id\tproj_short_name\tlast_recalc_date\tclndr_id\n\
+             %R\t\tDEMO\t2027-03-01 08:00:00\t5",
+        )
+        .replace("2027-03-02 08:00\n", "2027-03-02 08:00:00\n");
+    assert!(!text.contains("plan_start_date"));
+    let s = import(&text).unwrap();
+    assert_eq!(s.activities.len(), 3);
+    assert_eq!(s.project.planned_start.to_string(), "2027-03-01T08:00");
+    assert_eq!(run(&s).project_finish().to_string(), "2027-03-04T17:00");
+    // No project date at all: the earliest activity date is the start.
+    let bare = text
+        .replace("\tlast_recalc_date", "")
+        .replace("\t2027-03-01 08:00:00", "")
+        .replace(
+            "\tcstr_type\tcstr_date\n",
+            "\tcstr_type\ttarget_start_date\n",
+        )
+        .replace("\tCS_MSOA\t", "\t\t");
+    assert_eq!(
+        import(&bare).unwrap().project.planned_start.to_string(),
+        "2027-03-02T08:00"
+    );
+}
+
+#[test]
+fn fmt_01_dated_rates_and_assignment_actuals() {
+    // P6 keeps prices in RSRCRATE: 40/h, then 50/h from 2027-06-01 (price
+    // type 2 = 60/h). A uses type 2; 6 of its 16 h are spent.
+    let text = SAMPLE.replace(
+        "%E\n",
+        "%T\tRSRC\n%F\trsrc_id\trsrc_short_name\trsrc_name\trsrc_type\tclndr_id\n\
+         %R\t7\tCREW\tCrew\tRT_Labor\t5\n\
+         %T\tRSRCRATE\n%F\trsrc_rate_id\trsrc_id\tmax_qty_per_hr\tcost_per_qty\tcost_per_qty2\tstart_date\n\
+         %R\t2\t7\t2\t50\t\t2027-06-01 00:00\n\
+         %R\t1\t7\t1\t40\t60\t2027-01-01 00:00\n\
+         %T\tTASKRSRC\n%F\ttaskrsrc_id\ttask_id\trsrc_id\tproj_id\ttarget_qty\ttarget_qty_per_hr\tremain_qty\tact_reg_qty\tact_ot_qty\tact_reg_cost\tact_ot_cost\trate_type\n\
+         %R\t1\t1\t7\t10\t16\t1\t10\t5\t1\t300\t60\tCOST_PER_QTY2\n\
+         %E\n",
+    );
+    let s = import(&text).unwrap();
+    let r = s.resources.values().next().unwrap();
+    assert_eq!(r.rates.len(), 2);
+    assert_eq!(
+        r.rates[0].from,
+        Instant::MIN,
+        "earliest rate covers earlier work"
+    );
+    assert_eq!(r.rates[0].value[0], Money(Decimal::from(40)));
+    assert_eq!(r.rates[0].value[1], Money(Decimal::from(60)));
+    assert_eq!(r.rates[1].value[0], Money(Decimal::from(50)));
+    assert_eq!(
+        r.rates[1].value[1],
+        Money(Decimal::from(50)),
+        "blank price type inherits"
+    );
+    assert_eq!(r.max_units[1].value, Decimal::from(2));
+    let a = s.assignments.values().next().unwrap();
+    assert_eq!(a.rate_type, 1);
+    assert_eq!(a.actual_units, Decimal::from(6));
+    assert_eq!(a.actual_cost, Money(Decimal::from(360)));
+    assert_eq!(a.remaining_units, Some(Decimal::from(10)));
+}
+
+#[test]
 fn fmt_01_export_import_round_trip_preserves_schedule() {
     let original = import(SAMPLE).unwrap();
     let text = export(&original);
@@ -63,6 +134,28 @@ fn fmt_01_export_import_round_trip_preserves_schedule() {
     assert_eq!(
         run(&third).project_finish(),
         run(&original).project_finish()
+    );
+}
+
+#[test]
+fn cpm_19_round_trip_keeps_expected_finish_and_suspend() {
+    let mut original = import(SAMPLE).unwrap();
+    let at = |d| prswt_core::Instant::from_ymd_hm(2027, 3, d, 8, 0).unwrap();
+    let mut a = original.activities.values().next().unwrap().clone();
+    let id = a.id;
+    a.expected_finish = Some(at(20));
+    a.suspend = Some(at(5));
+    a.resume = Some(at(9));
+    original.activities.insert(id, a);
+    let again = import(&export(&original)).unwrap();
+    let b = again
+        .activities
+        .values()
+        .find(|b| b.code == original.activities[&id].code)
+        .unwrap();
+    assert_eq!(
+        (b.expected_finish, b.suspend, b.resume),
+        (Some(at(20)), Some(at(5)), Some(at(9)))
     );
 }
 
