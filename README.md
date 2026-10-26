@@ -24,10 +24,26 @@ cargo build --release
 Claude Code picks up the project-scoped MCP servers in `.mcp.json` (`prswt`, `prswt-db`). Persistence: `docker compose --env-file .env up -d`, then add `--db` (see `.env.example`).
 
 ## Desktop packages
-`tools/package-desktop.sh` builds and packages for the OS it runs on (`dist/`): a `.zip` on Windows, a `.tar.gz` with a `.desktop` entry on Linux, a `.dmg` with `PRSWT.app` on macOS. `.github/workflows/desktop-release.yml` runs it on Windows, Ubuntu and macOS (Apple Silicon and Intel) and attaches the packages to `v*` releases. Linux needs the usual desktop libraries at run time (OpenGL, xkbcommon, X11 or Wayland). Binaries are not code-signed yet, so Windows SmartScreen and macOS Gatekeeper warn on first start (macOS: right-click → Open).
+`tools/package-desktop.sh` builds and packages for the OS it runs on (`dist/`): a `.zip` on Windows, a `.tar.gz` with a `.desktop` entry on Linux, a `.dmg` with `PRSWT.app` on macOS. `.github/workflows/desktop-release.yml` runs it on Windows, Ubuntu and macOS (Apple Silicon and Intel) and attaches the packages to `v*` releases. Linux needs the usual desktop libraries at run time (OpenGL, xkbcommon, X11 or Wayland). Release builds are code-signed when the signing secrets are set ([docs/signing.md](docs/signing.md)); until then Windows SmartScreen and macOS Gatekeeper warn on first start (macOS: right-click → Open).
 
 ## Docs
 [User guide (RU)](docs/user-guide.md) · [ROADMAP](ROADMAP.md) · [architecture](docs/architecture.md) · [MCP](docs/mcp.md) · [parity checklist](docs/parity-checklist.md) · [gaps](docs/gaps.md) · design vault in `vault/` (Obsidian).
 
 ## Quality gate
 `./gate.ps1` runs fmt, clippy pedantic with `-D warnings` (never-crash lints, `missing_docs` denied), nextest (with the PostgreSQL tests when `.env` exists), rustdoc `-D warnings`, doctests, cargo-deny and the layering check.
+
+## How it is built
+PRSWT is written with [Claude Code](https://claude.com/claude-code) (Anthropic) under the direction of its author, who sets the goals and requirements, reviews the results and tests the app. Commits made this way carry a `Co-Authored-By: Claude` line, and the original brief is in [promt.md](promt.md). Every change passes the same gate as hand-written code: formatting, clippy, the test suite with hand-worked oracles in `vault/05-Math/`, rustdoc and license checks.
+
+## Code signing policy
+Windows releases are to be signed with free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) (application pending); macOS releases are signed with the author's Apple Developer ID and notarized. Only packages built by the `desktop-release` GitHub workflow from this repository are signed.
+
+- Committers and reviewers: [SSDECT](https://github.com/SSDECT) (project owner), with Claude Code as a co-author under the owner's review
+- Approvers: [SSDECT](https://github.com/SSDECT)
+
+Privacy: the desktop app sends nothing to other networked systems unless the user asks for it. The only network features are the optional cloud sync and sharing on `prswt.juz.ai`, used after **File ▸ Cloud ▸ Sign in…**.
+
+## License
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in PRSWT by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
