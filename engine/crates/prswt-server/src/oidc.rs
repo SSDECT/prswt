@@ -19,8 +19,9 @@ const PENDING_TTL_SECS: u64 = 600;
 /// Most simultaneous pending logins kept (memory guard).
 const MAX_PENDING: usize = 10_000;
 
-/// One configured identity provider.
-#[derive(Debug, Clone)]
+/// One configured identity provider. `Debug` hides the client secret so a
+/// stray `{:?}` of the config never writes it to a log.
+#[derive(Clone)]
 pub struct Provider {
     /// `google` or `microsoft` (used in URLs).
     pub name: &'static str,
@@ -42,6 +43,17 @@ pub struct Provider {
     /// has verified it (`xms_edov`), since anyone can put any address on
     /// an account in their own directory ("nOAuth").
     pub multi_tenant: bool,
+}
+
+impl std::fmt::Debug for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Provider")
+            .field("name", &self.name)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .field("tenants", &self.tenants)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Provider {

@@ -23,6 +23,16 @@ mod oidc_rules {
     }
 
     #[test]
+    fn auth_01_debug_hides_client_secret() {
+        let p = Provider::google("client-1".into(), "s3cr3t-value".into());
+        let text = format!("{p:?}");
+        assert!(
+            text.contains("client-1") && !text.contains("s3cr3t-value"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn auth_01_pkce_s256_reference() {
         // Reference computed independently with Python: base64url(sha256(verifier)), no padding.
         assert_eq!(
