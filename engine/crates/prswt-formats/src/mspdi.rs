@@ -354,8 +354,14 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
             .filter(|c| c.validate().is_ok());
         let mk = marks(t);
         let constraint = mk.c1.or(constraint);
-        // Codes must be unique: use the task ID, disambiguating repeats.
-        let base_code = non_empty(t.text_of("ID"), t.text_of("UID"));
+        // Codes must be unique: our own files carry the activity code in
+        // WBS; other files use the task ID. Repeats are disambiguated.
+        let id_code = non_empty(t.text_of("ID"), t.text_of("UID"));
+        let base_code = if prswt_field.is_some() {
+            non_empty(t.text_of("WBS").trim(), &id_code)
+        } else {
+            id_code
+        };
         let n = used_codes.entry(base_code.clone()).or_insert(0);
         *n += 1;
         let code = if *n == 1 {

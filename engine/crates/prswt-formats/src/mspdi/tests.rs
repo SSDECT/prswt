@@ -126,6 +126,22 @@ fn fmt_02_round_trip_keeps_schedule_calendar_and_structure() {
     assert_eq!(again.relationships.len(), original.relationships.len());
     assert_eq!(again.wbs.len(), original.wbs.len());
     assert_eq!(again.calendars.values().next().unwrap().exceptions.len(), 1);
+    let codes = |s: &ProjectState| {
+        let mut c: Vec<String> = s.activities.values().map(|a| a.code.clone()).collect();
+        c.sort();
+        c
+    };
+    let mut renamed = again.clone();
+    for (i, mut a) in again.activities.values().cloned().enumerate() {
+        a.code = format!("ACT-{i}");
+        renamed.activities.insert(a.id, a);
+    }
+    let back = import(&export(&renamed)).unwrap();
+    assert_eq!(
+        codes(&back),
+        codes(&renamed),
+        "activity codes survive our own files"
+    );
     let third = import(&export(&again)).unwrap();
     assert_eq!(
         run(&third).project_finish(),
