@@ -22,3 +22,12 @@ Standard 5×8 with a holiday on Tue 2027-03-02. A 16 h → B 24 h (FS + 1 d) →
 - The 1 d lag consumes Thu 4th.
 - B runs Fri 5th, Mon 8th and Tue 9th.
 - **The finish is Tue 2027-03-09 17:00.** It is unchanged after two export/import round trips, and the holiday survives.
+
+## FMT-03: percent lags and summary links
+- **Percent lag.** A is 80 h (10 d) and B has an FS link with `LagFormat` 19 (percent) and `LinkLag` 500. LinkLag is in tenths, so that is 50.0 %, and the lag is 50 % × 10 d = 5 d (2400 working minutes).
+- **Links to summary tasks.** Summary S holds C and D.
+  - X → S (SS) becomes X → C and X → D. A summary starts with its first child, so "S starts after X starts" holds exactly when every child does.
+  - S → Y (FF) becomes C → Y and D → Y. A summary finishes with its last child.
+  - S → Z (SS) is skipped. It would need "any child", which PRSWT links cannot express.
+  - The sample file's Civil → Done becomes Excavate → Done. Pour → Done already exists, so the expanded copy is dropped.
+- **Lossless fields.** These values survive export and import through the `PRSWT` custom field: level of effort, start milestone, soft start-on, secondary constraint, `must_finish_by`, expected finish and leveled start. Suspend and resume use MSPDI's `Stop` and `Resume`.

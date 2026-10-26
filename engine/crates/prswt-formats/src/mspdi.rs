@@ -6,11 +6,16 @@
 //! tasks → WBS, tasks (duration, remaining, constraints, progress,
 //! milestones), predecessor links with lags, resources, assignments.
 //!
-//! Lossy points (also in `docs/gaps.md`): MS Project has no level-of-effort,
-//! WBS-summary or soft "start/finish on" types (they map to task / mandatory
-//! constraints); percent-based lags import as zero; links to summary tasks
-//! are skipped; PRSWT's `must_finish_by` is written as the project finish
-//! date and is not read back.
+//! What MS Project cannot express natively (level-of-effort, WBS-summary,
+//! start-milestone and resource-dependent types, soft "start/finish on",
+//! secondary constraints, `must_finish_by`) travels in the task custom field
+//! Text1 under the alias `PRSWT` (`kind=…;c1=…;c2=…;must_finish_by=…`), so a
+//! PRSWT → MSPDI → PRSWT round trip is lossless and MS Project shows the
+//! values as a column. Percent lags (`LagFormat` 19/20) become a share of the
+//! predecessor's duration. Links to summary tasks are expanded to the summary's
+//! leaf tasks where that is exact (finish of a summary = latest child finish,
+//! start = earliest child start); SS/SF from a summary and FF/SF into one have
+//! no exact equivalent and are skipped.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
@@ -40,6 +45,12 @@ const MAX_ELEMENTS: usize = 5_000_000;
 const MAX_EXCEPTION_DAYS: i64 = 3_660;
 /// MSPDI date-time format.
 const DATE: &str = "%Y-%m-%dT%H:%M:%S";
+/// MSPDI field id of the task custom field Text1 (public MSPDI field list).
+const TEXT1_FIELD_ID: &str = "188743731";
+/// Alias of the custom field that carries PRSWT-only values.
+const PRSWT_ALIAS: &str = "PRSWT";
+/// Cap on links after expanding summary links (hostile-input guard).
+const MAX_LINKS: usize = 500_000;
 
 /// A parsed XML element (local name, concatenated text, children).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -178,6 +189,25 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
         .filter(|m| (1..=1440).contains(m))
         .unwrap_or(480);
 
+    // Field id of the PRSWT custom field, when the file declares one.
+    let prswt_field = doc
+        .child("ExtendedAttributes")
+        .and_then(|x| {
+            x.all("ExtendedAttribute")
+                .find(|a| a.text_of("Alias") == PRSWT_ALIAS)
+        })
+        .map(|a| a.text_of("FieldID").to_owned());
+    let marks = |t: &El| -> Marks {
+        prswt_field
+            .as_deref()
+            .and_then(|fid| {
+                t.all("ExtendedAttribute")
+                    .find(|a| a.text_of("FieldID") == fid)
+            })
+            .map(|a| Marks::parse(a.text_of("Value")))
+            .unwrap_or_default()
+    };
+
     // Calendars (two passes: base calendars first so derived weeks can inherit).
     let mut cal_ids: HashMap<String, CalendarId> = HashMap::new();
     let cals: Vec<&El> = doc
@@ -256,22 +286,27 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
         .collect();
 
     // Tasks: summaries become WBS nodes keyed by outline number.
-    let tasks: Vec<&El> = doc
+    let all_tasks: Vec<&El> = doc
         .child("Tasks")
-        .map(|t| {
-            t.all("Task")
-                .filter(|t| t.text_of("UID") != "0" && t.text_of("IsNull") != "1")
-                .collect()
-        })
+        .map(|t| t.all("Task").collect())
         .unwrap_or_default();
+    if let Some(t0) = all_tasks.iter().find(|t| t.text_of("UID") == "0") {
+        state.project.must_finish_by = marks(t0).must_finish_by;
+    }
+    let tasks: Vec<&El> = all_tasks
+        .into_iter()
+        .filter(|t| t.text_of("UID") != "0" && t.text_of("IsNull") != "1")
+        .collect();
+    let outlines = outline_numbers(&tasks);
+    let on = |t: &El| outlines.get(t.text_of("UID")).cloned().unwrap_or_default();
     let mut wbs_by_outline: HashMap<String, WbsId> = HashMap::new();
     let mut summaries: Vec<&&El> = tasks
         .iter()
         .filter(|t| t.text_of("Summary") == "1")
         .collect();
-    summaries.sort_by_key(|t| t.text_of("OutlineNumber").split('.').count());
+    summaries.sort_by_key(|t| on(t).split('.').count());
     for (k, t) in summaries.iter().enumerate() {
-        let outline = t.text_of("OutlineNumber").to_owned();
+        let outline = on(t);
         let parent = parent_outline(&outline)
             .and_then(|p| wbs_by_outline.get(&p).copied())
             .unwrap_or(root.id);
@@ -294,8 +329,8 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
     for t in tasks.iter().filter(|t| t.text_of("Summary") != "1") {
         let id = ActivityId::new();
         act_ids.insert(t.text_of("UID").to_owned(), id);
-        let outline = t.text_of("OutlineNumber");
-        let wbs = parent_outline(outline)
+        let outline = on(t);
+        let wbs = parent_outline(&outline)
             .and_then(|p| wbs_by_outline.get(&p).copied())
             .unwrap_or(root.id);
         let milestone = t.text_of("Milestone") == "1";
@@ -317,6 +352,8 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
                 },
             })
             .filter(|c| c.validate().is_ok());
+        let mk = marks(t);
+        let constraint = mk.c1.or(constraint);
         // Codes must be unique: use the task ID, disambiguating repeats.
         let base_code = non_empty(t.text_of("ID"), t.text_of("UID"));
         let n = used_codes.entry(base_code.clone()).or_insert(0);
@@ -332,11 +369,11 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
                 code,
                 name: t.text_of("Name").to_owned(),
                 wbs,
-                kind: if milestone {
+                kind: mk.kind.unwrap_or(if milestone {
                     ActivityKind::FinishMilestone
                 } else {
                     ActivityKind::TaskDependent
-                },
+                }),
                 calendar: cal_ids
                     .get(t.text_of("CalendarUID"))
                     .copied()
@@ -346,7 +383,7 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
                     .and_then(|_| parse_duration(t.text_of("RemainingDuration"), mpd))
                     .map(WorkMinutes),
                 primary_constraint: constraint,
-                secondary_constraint: None,
+                secondary_constraint: mk.c2,
                 actual_start,
                 actual_finish: parse_date(t.text_of("ActualFinish")),
                 pct_complete: t
@@ -355,41 +392,89 @@ pub fn import(text: &str) -> Result<ProjectState, EngineError> {
                     .unwrap_or(Decimal::ZERO)
                     .clamp(Decimal::ZERO, Decimal::ONE_HUNDRED),
                 pct_type: PercentCompleteType::Duration,
+                expected_finish: mk.expected_finish,
+                suspend: parse_date(t.text_of("Stop")).filter(|_| actual_start.is_some()),
+                resume: parse_date(t.text_of("Resume")).filter(|_| actual_start.is_some()),
+                leveled_start: mk.leveled_start,
             }),
         });
     }
+    // Leaf tasks under each summary, for links that touch a summary.
+    let by_uid: HashMap<&str, &El> = tasks.iter().map(|t| (t.text_of("UID"), *t)).collect();
+    let mut leaves: HashMap<&str, Vec<ActivityId>> = HashMap::new();
+    for s in tasks.iter().filter(|t| t.text_of("Summary") == "1") {
+        let prefix = format!("{}.", on(s));
+        let under = tasks
+            .iter()
+            .filter(|t| t.text_of("Summary") != "1" && on(t).starts_with(&prefix))
+            .filter_map(|t| act_ids.get(t.text_of("UID")).copied())
+            .collect();
+        leaves.insert(s.text_of("UID"), under);
+    }
+    let mut seen_links = std::collections::HashSet::new();
     for t in &tasks {
-        let Some(&succ) = act_ids.get(t.text_of("UID")) else {
-            continue;
-        };
+        let own = t.text_of("UID");
         for link in t.all("PredecessorLink") {
-            let Some(&pred) = act_ids.get(link.text_of("PredecessorUID")) else {
-                continue; // links to summaries or other projects have no PRSWT equivalent
-            };
             let kind = match link.text_of("Type") {
                 "0" => RelationKind::FF,
                 "2" => RelationKind::SF,
                 "3" => RelationKind::SS,
                 _ => RelationKind::FS,
             };
-            let format = link.text_of("LagFormat");
-            // LinkLag is in tenths of minutes; percent formats (19/20) are not supported.
-            let lag = if matches!(format, "19" | "20") {
-                0
-            } else {
-                link.text_of("LinkLag").parse::<i64>().unwrap_or(0) / 10
+            let pred_uid = link.text_of("PredecessorUID");
+            // A summary finishes with its last child and starts with its
+            // first, so only finish-from and start-into links expand exactly.
+            let ends = |uid: &str, exact: bool| -> Vec<ActivityId> {
+                match act_ids.get(uid) {
+                    Some(&id) => vec![id],
+                    None if exact => leaves.get(uid).cloned().unwrap_or_default(),
+                    None => Vec::new(),
+                }
             };
-            let elapsed = matches!(format, "4" | "6" | "8" | "10" | "12");
-            cmds.push(Command::UpsertRelationship {
-                relationship: Relationship {
-                    id: RelationshipId::new(),
-                    pred,
-                    succ,
-                    kind,
-                    lag: WorkMinutes(lag.clamp(-100 * 366 * 1440, 100 * 366 * 1440)),
-                    lag_calendar: elapsed.then_some(LagCalendar::TwentyFourHour),
-                },
-            });
+            let preds = ends(
+                pred_uid,
+                matches!(kind, RelationKind::FS | RelationKind::FF),
+            );
+            let succs = ends(own, matches!(kind, RelationKind::FS | RelationKind::SS));
+            let format = link.text_of("LagFormat");
+            let raw = link.text_of("LinkLag").parse::<i64>().unwrap_or(0);
+            // LinkLag is tenths of a minute, or tenths of a percent of the
+            // predecessor's duration for the percent formats.
+            let lag = if matches!(format, "19" | "20") {
+                let pred_dur = by_uid
+                    .get(pred_uid)
+                    .and_then(|p| parse_duration(p.text_of("Duration"), mpd))
+                    .unwrap_or(0);
+                (Decimal::from(pred_dur) * Decimal::from(raw) / Decimal::from(1000))
+                    .round()
+                    .to_i64()
+                    .unwrap_or(0)
+            } else {
+                raw / 10
+            };
+            let elapsed = matches!(format, "4" | "6" | "8" | "10" | "12" | "20");
+            for &pred in &preds {
+                for &succ in &succs {
+                    if pred == succ || !seen_links.insert((pred, succ, kind)) {
+                        continue;
+                    }
+                    if seen_links.len() > MAX_LINKS {
+                        return Err(EngineError::validation(format!(
+                            "more than {MAX_LINKS} links after expanding summary links"
+                        )));
+                    }
+                    cmds.push(Command::UpsertRelationship {
+                        relationship: Relationship {
+                            id: RelationshipId::new(),
+                            pred,
+                            succ,
+                            kind,
+                            lag: WorkMinutes(lag.clamp(-100 * 366 * 1440, 100 * 366 * 1440)),
+                            lag_calendar: elapsed.then_some(LagCalendar::TwentyFourHour),
+                        },
+                    });
+                }
+            }
         }
     }
 
@@ -518,6 +603,10 @@ pub fn export(state: &ProjectState) -> String {
         &id_of(p.default_calendar.0.as_u128()).to_string(),
     );
 
+    let _ = writeln!(
+        x,
+        "  <ExtendedAttributes><ExtendedAttribute><FieldID>{TEXT1_FIELD_ID}</FieldID><FieldName>Text1</FieldName><Alias>{PRSWT_ALIAS}</Alias></ExtendedAttribute></ExtendedAttributes>"
+    );
     x.push_str("  <Calendars>\n");
     for c in state.calendars.values() {
         x.push_str("    <Calendar>\n");
@@ -579,7 +668,15 @@ pub fn export(state: &ProjectState) -> String {
     x.push_str("  </Calendars>\n  <Tasks>\n");
     x.push_str("    <Task><UID>0</UID><ID>0</ID><Name>");
     x.push_str(&esc(&p.name));
-    x.push_str("</Name><OutlineNumber>0</OutlineNumber><OutlineLevel>0</OutlineLevel><Summary>1</Summary></Task>\n");
+    x.push_str(
+        "</Name><OutlineNumber>0</OutlineNumber><OutlineLevel>0</OutlineLevel><Summary>1</Summary>",
+    );
+    let project_marks = Marks {
+        must_finish_by: p.must_finish_by,
+        ..Marks::default()
+    };
+    extended_attribute(&mut x, &project_marks.render());
+    x.push_str("</Task>\n");
 
     // Depth-first over the WBS: summary task per non-root element, then its activities.
     let root = state
@@ -672,6 +769,12 @@ pub fn export(state: &ProjectState) -> String {
                     if let Some(d) = a.actual_finish {
                         tag(&mut x, 3, "ActualFinish", &date(d));
                     }
+                    if let Some(d) = a.suspend {
+                        tag(&mut x, 3, "Stop", &date(d));
+                    }
+                    if let Some(d) = a.resume {
+                        tag(&mut x, 3, "Resume", &date(d));
+                    }
                     tag(
                         &mut x,
                         3,
@@ -697,6 +800,8 @@ pub fn export(state: &ProjectState) -> String {
                             r.lag.0 * 10
                         );
                     }
+                    let marks = Marks::of(a);
+                    extended_attribute(&mut x, &marks.render());
                     x.push_str("    </Task>\n");
                 }
             }
@@ -763,6 +868,162 @@ pub fn export(state: &ProjectState) -> String {
     }
     x.push_str("  </Assignments>\n</Project>\n");
     x
+}
+
+/// PRSWT-only values carried in the `PRSWT` custom field.
+#[derive(Debug, Default, PartialEq)]
+struct Marks {
+    /// Activity type MS Project cannot express.
+    kind: Option<ActivityKind>,
+    /// Primary constraint, when MS Project's codes would lose it.
+    c1: Option<Constraint>,
+    /// Secondary constraint.
+    c2: Option<Constraint>,
+    /// Project target finish (on the project summary task).
+    must_finish_by: Option<Instant>,
+    /// Expected finish (P6; MS Project has none).
+    expected_finish: Option<Instant>,
+    /// Start kept by resource leveling.
+    leveled_start: Option<Instant>,
+}
+
+impl Marks {
+    /// What an activity needs beyond MS Project's own fields.
+    fn of(a: &Activity) -> Self {
+        let native_kind = matches!(
+            a.kind,
+            ActivityKind::TaskDependent | ActivityKind::FinishMilestone
+        );
+        let soft_on = a
+            .primary_constraint
+            .filter(|c| matches!(c.kind, ConstraintKind::StartOn | ConstraintKind::FinishOn));
+        Self {
+            kind: (!native_kind).then_some(a.kind),
+            c1: soft_on,
+            c2: a.secondary_constraint,
+            must_finish_by: None,
+            expected_finish: a.expected_finish,
+            leveled_start: a.leveled_start,
+        }
+    }
+
+    /// `key=value;…`, empty when nothing needs carrying.
+    fn render(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(k) = self.kind {
+            parts.push(format!("kind={}", kind_name(k)));
+        }
+        if let Some(c) = self.c1 {
+            parts.push(format!("c1={}", constraint_text(c)));
+        }
+        if let Some(c) = self.c2 {
+            parts.push(format!("c2={}", constraint_text(c)));
+        }
+        for (key, d) in [
+            ("must_finish_by", self.must_finish_by),
+            ("expected_finish", self.expected_finish),
+            ("leveled_start", self.leveled_start),
+        ] {
+            if let Some(d) = d {
+                parts.push(format!("{key}={}", date(d)));
+            }
+        }
+        parts.join(";")
+    }
+
+    /// Reads `render`'s format; unknown keys and bad values are ignored.
+    fn parse(s: &str) -> Self {
+        let mut m = Self::default();
+        for part in s.split(';').take(16) {
+            let Some((k, v)) = part.split_once('=') else {
+                continue;
+            };
+            match k.trim() {
+                "kind" => m.kind = kind_from(v.trim()),
+                "c1" => m.c1 = constraint_from(v),
+                "c2" => m.c2 = constraint_from(v),
+                "must_finish_by" => m.must_finish_by = parse_date(v),
+                "expected_finish" => m.expected_finish = parse_date(v),
+                "leveled_start" => m.leveled_start = parse_date(v),
+                _ => {}
+            }
+        }
+        m
+    }
+}
+
+/// Writes the PRSWT custom field value, if any.
+fn extended_attribute(x: &mut String, value: &str) {
+    if value.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        x,
+        "      <ExtendedAttribute><FieldID>{TEXT1_FIELD_ID}</FieldID><Value>{}</Value></ExtendedAttribute>",
+        esc(value)
+    );
+}
+
+const KIND_NAMES: [(ActivityKind, &str); 6] = [
+    (ActivityKind::TaskDependent, "task_dependent"),
+    (ActivityKind::ResourceDependent, "resource_dependent"),
+    (ActivityKind::LevelOfEffort, "level_of_effort"),
+    (ActivityKind::StartMilestone, "start_milestone"),
+    (ActivityKind::FinishMilestone, "finish_milestone"),
+    (ActivityKind::WbsSummary, "wbs_summary"),
+];
+
+const CONSTRAINT_NAMES: [(ConstraintKind, &str); 10] = [
+    (ConstraintKind::AsSoonAsPossible, "as_soon_as_possible"),
+    (ConstraintKind::AsLateAsPossible, "as_late_as_possible"),
+    (ConstraintKind::StartOn, "start_on"),
+    (ConstraintKind::StartNoEarlierThan, "start_no_earlier_than"),
+    (ConstraintKind::StartNoLaterThan, "start_no_later_than"),
+    (ConstraintKind::FinishOn, "finish_on"),
+    (
+        ConstraintKind::FinishNoEarlierThan,
+        "finish_no_earlier_than",
+    ),
+    (ConstraintKind::FinishNoLaterThan, "finish_no_later_than"),
+    (ConstraintKind::MandatoryStart, "mandatory_start"),
+    (ConstraintKind::MandatoryFinish, "mandatory_finish"),
+];
+
+fn kind_name(k: ActivityKind) -> &'static str {
+    KIND_NAMES
+        .iter()
+        .find(|(x, _)| *x == k)
+        .map_or("task_dependent", |(_, n)| n)
+}
+
+fn kind_from(s: &str) -> Option<ActivityKind> {
+    KIND_NAMES.iter().find(|(_, n)| *n == s).map(|(k, _)| *k)
+}
+
+/// `kind@date` (date empty for date-less kinds).
+fn constraint_text(c: Constraint) -> String {
+    let name = CONSTRAINT_NAMES
+        .iter()
+        .find(|(x, _)| *x == c.kind)
+        .map_or("as_soon_as_possible", |(_, n)| n);
+    format!("{name}@{}", c.date.map(date).unwrap_or_default())
+}
+
+fn constraint_from(s: &str) -> Option<Constraint> {
+    let (name, d) = s.trim().split_once('@').unwrap_or((s.trim(), ""));
+    let kind = CONSTRAINT_NAMES
+        .iter()
+        .find(|(_, n)| *n == name)
+        .map(|(k, _)| *k)?;
+    let c = Constraint {
+        kind,
+        date: if kind.needs_date() {
+            parse_date(d)
+        } else {
+            None
+        },
+    };
+    c.validate().is_ok().then_some(c)
 }
 
 /// Export traversal item.
@@ -878,6 +1139,45 @@ fn hm(s: &str) -> Option<u16> {
     let h: u16 = it.next()?.parse().ok()?;
     let m: u16 = it.next()?.parse().ok()?;
     (h <= 24 && m < 60 && h * 60 + m <= 1440).then_some(h * 60 + m)
+}
+
+/// Deepest outline level rebuilt from `OutlineLevel` (deeper rows are
+/// clamped to it; real plans stay far below).
+const MAX_OUTLINE_DEPTH: usize = 64;
+
+/// Outline number per task UID. `OutlineNumber` is optional in MSPDI; files
+/// that carry only `OutlineLevel` get numbers rebuilt from the task order,
+/// the way MS Project numbers its outline.
+fn outline_numbers<'a>(tasks: &[&'a El]) -> HashMap<&'a str, String> {
+    let mut counters: Vec<u32> = Vec::new();
+    let mut out = HashMap::with_capacity(tasks.len());
+    for t in tasks {
+        let given = t.text_of("OutlineNumber").trim();
+        let number = if given.is_empty() {
+            let level = t
+                .text_of("OutlineLevel")
+                .trim()
+                .parse::<usize>()
+                .unwrap_or(1)
+                .clamp(1, (counters.len() + 1).min(MAX_OUTLINE_DEPTH));
+            counters.truncate(level);
+            if counters.len() < level {
+                counters.push(0);
+            }
+            if let Some(last) = counters.last_mut() {
+                *last = last.saturating_add(1);
+            }
+            counters
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(".")
+        } else {
+            given.to_owned()
+        };
+        out.insert(t.text_of("UID"), number);
+    }
+    out
 }
 
 fn parent_outline(outline: &str) -> Option<String> {
