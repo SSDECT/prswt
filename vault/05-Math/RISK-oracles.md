@@ -42,3 +42,13 @@ The network is S(1) → A(10) → E(1). The fallback S → X(2) → E replaces A
 - If A stays in the network, it is an open end and the finish is 1 + 10 = 11 d.
 - With `replaces = [A]`, A is inactive in the iteration and the finish is 1 + 2 + 1 = 4 d.
 - Realizing the risk cuts A's remaining duration to 0.
+
+## RSK-17 Certain risk in the tornado (2026-10-26)
+
+A 10d → B 10d on a 24h calendar.
+SURE (p = 1) adds 4d to A. MAYBE (p = 0.3) adds 10d to B.
+
+E[finish | SURE] − E[finish | not SURE] is undefined, because SURE always occurs. So the first 500 iterations are re-run with SURE off, on the same random numbers.
+
+Every iteration is 4d shorter, so the effect is exactly 4d. MAYBE's conditional difference is exactly 10d, so MAYBE ranks first.
+Test: `rsk_03_certain_risk_effect_in_tornado`.

@@ -160,6 +160,37 @@ mod analytic {
     }
 
     #[test]
+    fn rsk_03_certain_risk_effect_in_tornado() {
+        // A 10d → B 10d; a certain 4d delay on A and a 30 % 10d delay on B.
+        // The certain risk has no "did not occur" iterations; its effect is
+        // measured by re-running without it: exactly 4 days.
+        let mut w = World::new();
+        w.add("A", fixed(10));
+        w.add("B", fixed(10));
+        w.fs("A", "B");
+        let sure = w.risk(
+            "SURE",
+            "1",
+            vec![RiskBinding::Activity(w.id("A"))],
+            vec![delay(4)],
+        );
+        w.risk(
+            "MAYBE",
+            "0.3",
+            vec![RiskBinding::Activity(w.id("B"))],
+            vec![delay(10)],
+        );
+        let r = w.run(2_000);
+        let s = r.risk_tornado.iter().find(|t| t.risk == sure).unwrap();
+        assert_eq!(s.occurrence_rate, 1.0);
+        assert!((s.finish_delta_minutes / DAYF - 4.0).abs() < 1e-9);
+        assert!(
+            (r.risk_tornado[0].finish_delta_minutes / DAYF - 10.0).abs() < 1e-9,
+            "MAYBE ranks first"
+        );
+    }
+
+    #[test]
     fn rsk_03_bernoulli_delay_risk() {
         let mut w = World::new();
         w.add("A", fixed(10));

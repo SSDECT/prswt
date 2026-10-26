@@ -32,6 +32,11 @@ const MAX_SENSITIVITY_CELLS: usize = 20_000_000;
 pub const MAX_ITERATIONS: u32 = 200_000;
 /// Floor on remaining capacity share for resource degradation.
 const MIN_CAPACITY_FACTOR: f64 = 0.05;
+/// Iterations re-run without a risk that occurred in every iteration, to
+/// measure its effect (the occurs/not-occurs split has no "not" side).
+const CERTAIN_RISK_ITERATIONS: usize = 500;
+/// Most such risks measured per run; the rest keep a zero effect.
+const MAX_CERTAIN_RISKS: usize = 20;
 
 /// Per-activity cost split used to scale time-dependent cost with duration.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize)]
@@ -240,6 +245,8 @@ pub struct RiskStat {
     /// Share of iterations in which it occurred.
     pub occurrence_rate: f64,
     /// E[finish | occurs] − E[finish | not occurs], working-free minutes.
+    /// For a risk that occurred in every iteration: the mean finish minus the
+    /// mean of the same iterations re-run without it.
     pub finish_delta_minutes: f64,
     /// E[cost | occurs] − E[cost | not].
     pub cost_delta: f64,
@@ -883,7 +890,55 @@ impl SimModel {
             }
             prev = Some((p50, p80, c80));
         }
-        Ok(self.aggregate(&all, cfg, converged, trace))
+        let mut res = self.aggregate(&all, cfg, converged, trace);
+        self.measure_certain_risks(&mut res, &all, cfg.seed, cancel)?;
+        Ok(res)
+    }
+
+    /// Tornado entries for risks that occurred in every iteration: the same
+    /// iterations (same random numbers) re-run with the risk switched off;
+    /// the difference of the means is the risk's effect.
+    #[allow(clippy::cast_precision_loss)]
+    fn measure_certain_risks(
+        &self,
+        res: &mut SimResult,
+        all: &[Iter],
+        seed: u64,
+        cancel: &AtomicBool,
+    ) -> Result<(), EngineError> {
+        let k = all.len().min(CERTAIN_RISK_ITERATIONS);
+        if k == 0 {
+            return Ok(());
+        }
+        let certain: Vec<usize> = (0..self.risks.len())
+            .filter(|&ri| all.iter().all(|it| it.occurred[ri]))
+            .take(MAX_CERTAIN_RISKS)
+            .collect();
+        let mean = |xs: &[Iter], f: &dyn Fn(&Iter) -> f64| xs.iter().map(f).sum::<f64>() / k as f64;
+        let with_finish = mean(&all[..k], &|x| int_f64(x.finish));
+        let with_cost = mean(&all[..k], &|x| x.cost);
+        for ri in certain {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(EngineError::validation("risk analysis cancelled"));
+            }
+            let mut m = self.clone();
+            m.risks[ri].probability = 0.0;
+            for r in &mut m.risks {
+                r.triggers.retain(|&(j, _)| j != ri);
+            }
+            let without = run_range(&m, seed, 0, u64::try_from(k).unwrap_or(0), 0)?;
+            let id = self.risks[ri].id;
+            if let Some(stat) = res.risk_tornado.iter_mut().find(|s| s.risk == id) {
+                stat.finish_delta_minutes = with_finish - mean(&without, &|x| int_f64(x.finish));
+                stat.cost_delta = with_cost - mean(&without, &|x| x.cost);
+            }
+        }
+        res.risk_tornado.sort_by(|a, b| {
+            b.finish_delta_minutes
+                .abs()
+                .total_cmp(&a.finish_delta_minutes.abs())
+        });
+        Ok(())
     }
 
     #[allow(clippy::cast_precision_loss)]
