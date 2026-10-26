@@ -1,17 +1,17 @@
 # PRSWT Roadmap
 
-> **Last updated:** 2026-10-25 · **Stage:** alpha (engine complete, desktop app feature-complete for the catalog) · **Target:** Oracle Primavera P6 EPPM + Primavera Risk Analysis
+> **Last updated:** 2026-10-26 · **Stage:** alpha (engine complete, desktop app feature-complete for the catalog) · **Target:** Oracle Primavera P6 EPPM + Primavera Risk Analysis
 
 ## Headline numbers
 | Measure | Value |
 |---|---|
 | P6 feature areas covered | 28 / 35 ([parity checklist](docs/parity-checklist.md)) |
-| Engine commands | 52 (one catalog for UI, CLI, HTTP and MCP) |
+| Engine commands | 64 (one catalog for UI, CLI, HTTP and MCP) |
 | MCP | 39 curated tools + `execute_command` + `list_commands`, 14 resource URIs, 5 prompts |
-| Automated tests | 118 (oracle, property, fuzz, database, headless UI) |
+| Automated tests | 197 (oracle, property, fuzz, database, headless UI) |
 | CPM performance | 10k activities / 50k links < 10 ms per full recalculation |
 | Monte Carlo performance | 5k activities × 5k iterations ≈ 1.5 s |
-| Crates | 15, layering enforced by `cargo xtask layers` |
+| Crates | 16, layering enforced by `cargo xtask layers` |
 
 ## Phases
 | Phase | Status |

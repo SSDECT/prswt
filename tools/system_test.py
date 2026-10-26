@@ -22,7 +22,7 @@ import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BIN = ROOT / "engine" / "target" / "release"
+BIN = pathlib.Path(os.environ["PRSWT_BIN"]) if os.environ.get("PRSWT_BIN") else ROOT / "engine" / "target" / "release"
 CLI = str(BIN / "prswt-cli.exe")
 APP = str(BIN / "prswt.exe")
 SERVER = str(BIN / "prswt-server.exe")
@@ -120,7 +120,7 @@ def s01_artifacts():
 def s02_catalog():
     code, out, _ = cli("commands")
     cmds = json.loads(out)["commands"] if code == 0 else []
-    check("S02 command catalog has 52 commands", len(cmds) == 52, f"{len(cmds)} commands")
+    check("S02 command catalog has 64 commands", len(cmds) == 64, f"{len(cmds)} commands")
 
 
 def s03_cli_analysis():
@@ -239,24 +239,29 @@ def s08_persistence(env):
 
 def s09_http_api():
     port = free_port()
-    p = subprocess.Popen([CLI, "api", "--control", str(port), "--sample", "bridge"], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+    token = "system-test-token"
+    env = {**os.environ, "PRSWT_API_TOKEN": token}
+    p = subprocess.Popen([CLI, "api", "--control", str(port), "--sample", "bridge"], stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+    auth = {"authorization": f"Bearer {token}"}
     try:
         if not check("S09 HTTP API starts", wait_port(port)):
             return
         base = f"http://127.0.0.1:{port}/v1"
-        code, body = http("GET", f"{base}/commands")
-        check("S09 GET /v1/commands", code == 200 and len(body["commands"]) == 52)
-        code, body = http("POST", f"{base}/commands/schedule.run")
+        code, _ = http("GET", f"{base}/commands")
+        check("S09 no token → 401", code == 401)
+        code, body = http("GET", f"{base}/commands", None, auth)
+        check("S09 GET /v1/commands", code == 200 and len(body["commands"]) == 64)
+        code, body = http("POST", f"{base}/commands/schedule.run", None, auth)
         check("S09 POST schedule.run", code == 200 and body["finish"] == "2027-07-14T17:00")
-        code, body = http("POST", f"{base}/commands/activity.update", {"activity": "C30", "duration": "20d"}, {"x-prswt-agent": "bot"})
+        code, body = http("POST", f"{base}/commands/activity.update", {"activity": "C30", "duration": "20d"}, {"x-prswt-agent": "bot", **auth})
         check("S09 agent header → 403", code == 403)
-        code, _ = http("POST", f"{base}/commands/activity.update", {"activity": "C30", "duration": "bad"})
+        code, _ = http("POST", f"{base}/commands/activity.update", {"activity": "C30", "duration": "bad"}, auth)
         check("S09 bad input → 422", code == 422)
         got = []
 
         def listen():
             try:
-                with urllib.request.urlopen(f"{base}/events", timeout=15) as r:
+                with urllib.request.urlopen(urllib.request.Request(f"{base}/events", headers=auth), timeout=15) as r:
                     for line in r:
                         if line.startswith(b"data:"):
                             got.append(json.loads(line[5:]))
@@ -267,7 +272,7 @@ def s09_http_api():
         t = threading.Thread(target=listen, daemon=True)
         t.start()
         time.sleep(1)
-        http("POST", f"{base}/commands/activity.update", {"activity": "C30", "duration": "18d"})
+        http("POST", f"{base}/commands/activity.update", {"activity": "C30", "duration": "18d"}, auth)
         t.join(10)
         check("S09 SSE delivers the change event", got and got[0].get("author", {}).get("type") == "human", str(got)[:150])
     finally:

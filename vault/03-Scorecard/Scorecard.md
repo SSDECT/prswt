@@ -1,6 +1,6 @@
 ---
 type: scorecard
-updated: 2026-10-25
+updated: 2026-10-26
 ---
 # Scorecard
 
@@ -49,6 +49,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] CPM-16 `explain_dates` driver chains
 - [x] CPM-17 DCMA-14 health check
 - [x] CPM-18 Property tests (invariants 1–3) + benchmark 10k/50k < 10 ms
+- [x] CPM-19 Expected finish (project option), suspend/resume, out-of-sequence report (`schedule.run`, `schedule.health`); XER and MSPDI carry them
 
 ## P3 — Resources & EVM (`prswt-resource`, `prswt-evm`)
 - [x] RES-01 Assignments, curves, time-phased spread on resource calendar
@@ -56,6 +57,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] RES-03 Usage histograms (hour/day/week), overallocation detection
 - [x] RES-04 Serial SGS leveling with priority rules, preserve-float option
 - [x] RES-05 Resource-dependent duration
+- [x] RES-06 Leveled starts kept apart from constraints (P6 leveled dates), re-leveling from the unleveled network, `clear`
 - [x] COST-01 Assignment cost, expenses, rollup by WBS/OBS/cost account
 - [x] EVM-01 Baseline capture (state pointer) + time-phased budget
 - [x] EVM-02 PV, EV (per pct type), AC
@@ -78,6 +80,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] RSK-13 Deterministic RealizeRisk pipeline ([[03-Pipeline]] §B) + delta report
 - [x] RSK-14 Analytic validation (serial sum of triangulars, parallel max) + benchmark 5k×5k < 10 s
 - [x] RSK-15 Mitigation subgraph generator (5 strategies)
+- [x] RSK-16 Uncertain resource degradation sampled as capacity share with duration ÷ c; alternative paths take the replaced activity out of the network
 
 ## P5 — State & sandboxes (`prswt-state`)
 - [x] ST-01 ProjectState on `im` structures
@@ -88,6 +91,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] ST-06 TTL expiry, discard
 - [x] ST-07 Property tests invariants 4–6
 - [x] ST-08 Undo/redo (bounded 100 steps)
+- [x] ST-09 Undo/redo history saved in `.prswt` files (checked on open)
 - [x] APP-01 `prswt-app` service layer, compiled-model cache per (branch, version)
 - [x] APP-02 `CommandSpec` registry (P6-style ids), `execute(id, params)` with panic guard
 - [x] APP-03 Fuzz: every command with empty/garbage params; random command sequences vs invariants
@@ -117,6 +121,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 ## P8 — API & UI
 - [x] API-01 axum REST: GET /v1/commands, POST /v1/commands/{id}, error→HTTP status mapping
 - [x] API-02 SSE /v1/events fed by the workspace event hook
+- [x] API-03 Local API needs a bearer token (`PRSWT_API_TOKEN` or a printed one); `/v1/health` stays open
 - [x] UI-01 egui/eframe app shell (ADR-0008), theme tokens, control channel
 - [x] UI-02 Painted Gantt (bars, links, critical highlighting, baseline bars)
 - [x] UI-03 Activity table + editing through commands
@@ -129,6 +134,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] CLI-01 `prswt-cli`: info, schedule, simulate, run --cmd, commands, mcp
 - [x] FMT-01 P6 XER import/export (core tables: PROJECT, CALENDAR, PROJWBS, TASK, TASKPRED, RSRC, TASKRSRC)
 - [x] FMT-02 MS Project MSPDI XML import/export
+- [x] FMT-04 Real files: XER without plan_start_date / with seconds / blank proj_id, dated RSRCRATE prices and assignment actuals, MSPDI with OutlineLevel only (`docs/real-data-test-report.md`)
+- [x] FMT-03 MSPDI without loss: PRSWT-only values in the `PRSWT` custom field (Text1), percent lags, links to summary tasks expanded where exact, Stop/Resume
 - [x] DOC-01 ROADMAP.md, docs/architecture.md, target-app-parity.md, gaps.md, parity-checklist (generated)
 - [x] SKL-01 Evidence-verified `skills/prswt/SKILL.md`
 - [x] DOC-03 User guide in Russian (`docs/user-guide.md`): install, tabs, risks, what-if branches, cloud and sharing, agent tokens
@@ -149,6 +156,9 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] DSK-06 Dialogs for every command (calendar date pickers, code pick lists via `project.lookups`); coverage test over `commands.list`
 - [x] DSK-07 Visual polish: P6-style Gantt with date axis and table, start screen, readable dates and money, app style, icon; design B (modern workspace: navigation, inspector, Ctrl+K palette, Inter, light/dark)
 - [x] DSK-08 Release builds: Windows, Linux and macOS (Apple Silicon, Intel) packages from `desktop-release` on GitHub
+- [x] DSK-09 Activity table: sort by any column, filters, column choice, CSV export, Print / PDF (browser page); reports as tables; Cancel for long commands
+- [x] DSK-10 Network (PERT) diagram view
+- [x] DSK-11 Gantt baseline bars and "Compare with" another branch or project
 
 ## P12 — Cloud projects ([[Sync-Plan]], [[ADR-0010-cloud-sync-collaboration]])
 - [x] SYNC-01 Members and roles, scoped engine access, desktop sign-in (loopback + PKCE), save to / open from cloud
@@ -156,4 +166,5 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] SYNC-03 Proposals from people and agents; Accept / Reject / Withdraw in the app
 - [x] SYNC-04 Live updates and presence (SSE), settings sync, read-only agent tokens
 - [x] SYNC-05 Deployed to prswt.juz.ai (2026-10-25, Juz.ai tenant); other organizations need the multi-tenant switch in `docs/gaps.md`
+- [x] SYNC-07 "Use mine" / "Use all mine" in the conflicts dialog (`sync.reapply`)
 - [x] SYNC-06 Review fixes ([[fix-prompt-2026-10-25-cloud-review]]): failed syncs undone as a whole, ids kept by whole-entity writes, roles on every write, read-only tokens, owner claims, SSE limits, verified Microsoft emails, desktop streams stop, file dialogs in front
