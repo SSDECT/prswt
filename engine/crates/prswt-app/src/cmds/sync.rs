@@ -672,3 +672,52 @@ fn pending(
 fn proposal_json(p: &Proposal) -> Value {
     json!({ "by": p.by, "note": p.note, "at": t(p.at) })
 }
+
+/// Most conflict rows one `sync.reapply` takes.
+const MAX_REAPPLY: usize = 1_000;
+
+/// Puts back the local values a sync overwrote (the conflict rows it
+/// reported): a field is set again on the current entity, a whole item
+/// (`field` `*`) is restored as it was locally. Runs as one undoable change;
+/// the next sync sends it like any other edit. An item that no longer fits
+/// (e.g. a link to an activity deleted on the server) fails the whole call
+/// with the integrity error, and nothing changes.
+pub fn reapply(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
+    let p = P::of(v)?;
+    let (pid, bid) = w.target(&p)?;
+    let rows: Vec<Value> = p.req("conflicts")?;
+    if rows.is_empty() || rows.len() > MAX_REAPPLY {
+        return Err(EngineError::validation(format!(
+            "conflicts: 1..={MAX_REAPPLY} rows"
+        )));
+    }
+    let head = &w.repo_ref(pid)?.branch(bid)?.head;
+    let mut cmds = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let entity: prswt_state::EntityRef = serde_json::from_value(row["entity"].clone())
+            .map_err(|e| EngineError::validation(format!("conflict entity: {e}")))?;
+        let yours = row["yours"].clone();
+        let value = match row["field"].as_str().unwrap_or("*") {
+            "*" => (!yours.is_null()).then_some(yours),
+            field => {
+                let mut current = head.get_json(&entity).ok_or_else(|| {
+                    EngineError::not_found(format!(
+                        "{:?} {} (removed meanwhile)",
+                        entity.kind, entity.id
+                    ))
+                })?;
+                let Some(obj) = current.as_object_mut() else {
+                    return Err(EngineError::validation("conflict entity is not an object"));
+                };
+                if !obj.contains_key(field) {
+                    return Err(EngineError::validation(format!("unknown field `{field}`")));
+                }
+                obj.insert(field.to_owned(), yours);
+                Some(current)
+            }
+        };
+        cmds.push(Command::SetEntity { entity, value });
+    }
+    let e = w.apply(ctx, pid, bid, cmds, None)?;
+    Ok(json!({ "version": e.version, "reapplied": rows.len() }))
+}

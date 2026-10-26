@@ -511,17 +511,72 @@ impl PrswtApp {
             let r = egui::Modal::new(egui::Id::unique("cloud_conflicts")).show(ui.ctx(), |ui| {
                 ui.set_width(560.0);
                 ui.heading("Changes made by two people");
-                ui.label(RichText::new("Someone changed the same thing on the server while you were working. Their version was kept; yours is shown so you can redo it if needed.").color(tok.muted));
+                ui.label(RichText::new("Someone changed the same thing on the server while you were working. Their version was kept; yours is shown, and you can put yours back.").color(tok.muted));
                 ui.add_space(6.0);
+                let mut mine: Vec<Value> = Vec::new();
                 egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                     for c in &list {
-                        ui.label(conflict_text(c));
+                        ui.horizontal(|ui| {
+                            ui.label(conflict_text(c));
+                            if ui
+                                .small_button("Use mine")
+                                .on_hover_text("Put your value back (sent on the next sync)")
+                                .clicked()
+                            {
+                                mine.push(c.clone());
+                            }
+                        });
                         ui.separator();
                     }
                 });
-                ui.button("OK").clicked()
+                let (ok, all) = ui
+                    .horizontal(|ui| {
+                        (
+                            ui.button("Keep theirs").clicked(),
+                            ui.button("Use all mine").clicked(),
+                        )
+                    })
+                    .inner;
+                if all {
+                    mine.clone_from(&list);
+                }
+                (ok, mine)
             });
-            if r.inner || r.should_close() {
+            let closed = r.should_close();
+            let (ok, mine) = r.inner;
+            if !mine.is_empty() {
+                // Rows carry their branch name; each goes to that branch.
+                let mut done: Vec<Value> = Vec::new();
+                for branch in mine
+                    .iter()
+                    .filter_map(|c| c["branch"].as_str().map(str::to_owned))
+                    .collect::<std::collections::BTreeSet<_>>()
+                {
+                    let rows: Vec<Value> = mine
+                        .iter()
+                        .filter(|c| c["branch"].as_str() == Some(branch.as_str()))
+                        .cloned()
+                        .collect();
+                    if self
+                        .exec(
+                            "sync.reapply",
+                            serde_json::json!({ "branch": branch, "conflicts": rows }),
+                        )
+                        .is_some()
+                    {
+                        done.extend(rows);
+                    }
+                }
+                if let Some(st) = self.cloud.sync.get_mut(&id) {
+                    st.conflicts.retain(|c| !done.contains(c));
+                }
+            }
+            let left = self
+                .cloud
+                .sync
+                .get(&id)
+                .is_some_and(|s| !s.conflicts.is_empty());
+            if ok || closed || !left {
                 self.dialogs.conflicts = false;
                 if let Some(st) = self.cloud.sync.get_mut(&id) {
                     st.conflicts.clear();

@@ -66,6 +66,14 @@ static CATALOG: &[CommandSpec] = &[
         "project?, meta (branch metadata), base_version, commands, base? (new sandbox)"
     ),
     spec!(
+        "sync.reapply",
+        "Keep my version",
+        "File ▸ Cloud ▸ Conflicts",
+        true,
+        sync::reapply,
+        "project?, branch?, conflicts: [{entity, field, yours}] (rows a sync reported; at most 1000)"
+    ),
+    spec!(
         "sync.apply",
         "Apply cloud changes",
         "File ▸ Cloud",
@@ -273,7 +281,7 @@ static CATALOG: &[CommandSpec] = &[
         "Project ▸ Activities ▸ Status",
         true,
         network::activity_progress,
-        "activity, actual_start?, actual_finish?, pct?, remaining?, actual_cost? (cost to date, split over its resources and expenses by planned cost)"
+        "activity, actual_start?, actual_finish?, pct?, remaining?, actual_cost? (cost to date, split over its resources and expenses by planned cost), expected_finish?, clear_expected_finish?, suspend?, resume?, clear_suspend?"
     ),
     spec!(
         "relationship.add",
@@ -330,7 +338,7 @@ static CATALOG: &[CommandSpec] = &[
         "Project ▸ Activities",
         false,
         analysis::activities,
-        "project?, branch?, critical?, max_float?, text?, wbs?, sort? (float|start|code), limit?, offset?"
+        "project?, branch?, critical?, max_float?, text?, wbs?, sort? (float|start|code), limit?, offset?, links? (predecessors per row); rows carry baseline_start/baseline_finish/finish_variance once a baseline exists"
     ),
     spec!(
         "schedule.activity",
@@ -378,7 +386,7 @@ static CATALOG: &[CommandSpec] = &[
         "Tools ▸ Level Resources",
         true,
         analysis::level,
-        "project?, branch?, apply?, preserve_float?, resources?"
+        "project?, branch?, apply? (keep leveled starts), preserve_float?, resources?, clear? (remove leveled starts)"
     ),
     spec!(
         "cost.summary",

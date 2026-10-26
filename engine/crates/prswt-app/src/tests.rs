@@ -298,6 +298,19 @@ mod workflows {
         );
         w.execute(&h, "baseline.capture", &json!({ "name": "BL1" }))
             .unwrap();
+        let rows = w
+            .execute(&h, "schedule.activities", &json!({ "links": true }))
+            .unwrap();
+        assert_eq!(rows["baseline"], "BL1");
+        let c = rows["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["code"] == "C")
+            .unwrap();
+        assert_eq!(c["baseline_finish"], "2027-01-15T17:00");
+        assert_eq!(c["finish_variance"], "0d");
+        assert_eq!(c["predecessors"].as_array().unwrap().len(), 2);
         w.execute(
             &h,
             "activity.progress",
@@ -387,6 +400,182 @@ mod workflows {
             risks["risks"][0]["mitigations"][0]["cost"], "300.00",
             "explicit cost kept"
         );
+    }
+
+    /// RES-04 (gap 8): leveling keeps the user's constraints, stores the
+    /// leveled start apart, does not stack on a second run and can be cleared.
+    /// Same oracle as `app_02_build_progress_level_and_evm`.
+    #[test]
+    fn res_04_leveled_start_is_kept_apart_from_constraints() {
+        let (mut w, h) = ws();
+        for (cmd, p) in [
+            (
+                "project.create",
+                json!({ "name": "Demo", "start": "2027-01-04T08:00" }),
+            ),
+            ("activity.add", json!({ "code": "A", "duration": "4d" })),
+            (
+                "activity.add",
+                json!({ "code": "B", "duration": "4d",
+                        "constraint": { "kind": "start_no_earlier_than", "date": "2027-01-04T08:00" } }),
+            ),
+            (
+                "activity.add",
+                json!({ "code": "C", "duration": "2d", "predecessors": ["A", "B"] }),
+            ),
+            (
+                "resource.add",
+                json!({ "code": "R", "max_units": 1, "rate": 100 }),
+            ),
+            (
+                "resource.assign",
+                json!({ "activity": "A", "resource": "R" }),
+            ),
+            (
+                "resource.assign",
+                json!({ "activity": "B", "resource": "R" }),
+            ),
+        ] {
+            w.execute(&h, cmd, &p).unwrap();
+        }
+        let finish = |w: &mut Workspace| {
+            w.execute(&h, "schedule.run", &json!({})).unwrap()["finish"].clone()
+        };
+        let row = |w: &mut Workspace| {
+            w.execute(&h, "schedule.activity", &json!({ "activity": "B" }))
+                .unwrap()
+        };
+        assert_eq!(finish(&mut w), "2027-01-11T17:00", "C Fri+Mon");
+        for _ in 0..2 {
+            let lv = w
+                .execute(&h, "resource.level", &json!({ "apply": true }))
+                .unwrap();
+            assert_eq!(lv["finish_after"], "2027-01-15T17:00", "{lv}");
+            assert_eq!(finish(&mut w), "2027-01-15T17:00", "no stacking");
+        }
+        let b = row(&mut w);
+        let b = if b["activity"].is_object() {
+            b["activity"].clone()
+        } else {
+            b
+        };
+        assert_eq!(b["constraint"]["kind"], "start_no_earlier_than", "{b}");
+        assert_eq!(b["leveled_start"], "2027-01-08T08:00", "{b}");
+        let cleared = w
+            .execute(&h, "resource.level", &json!({ "clear": true }))
+            .unwrap();
+        assert_eq!(cleared["cleared"], 1);
+        assert_eq!(finish(&mut w), "2027-01-11T17:00", "C Fri+Mon");
+    }
+
+    /// Oracle (Mon–Fri 08–17, 8 h/day; 2027-01-04 is a Monday): A 4d → B 2d.
+    #[test]
+    fn cpm_19_suspend_expected_finish_and_out_of_sequence() {
+        let (mut w, h) = ws();
+        for (cmd, p) in [
+            (
+                "project.create",
+                json!({ "name": "X", "start": "2027-01-04" }),
+            ),
+            ("activity.add", json!({ "code": "A", "duration": "4d" })),
+            (
+                "activity.add",
+                json!({ "code": "B", "duration": "2d", "predecessors": ["A"] }),
+            ),
+            (
+                "activity.progress",
+                json!({ "activity": "A", "actual_start": "2027-01-04T08:00", "pct": 25 }),
+            ),
+            ("project.update", json!({ "data_date": "2027-01-05T08:00" })),
+        ] {
+            w.execute(&h, cmd, &p).unwrap();
+        }
+        let finish = |w: &mut Workspace| w.execute(&h, "schedule.run", &json!({})).unwrap();
+        assert_eq!(
+            finish(&mut w)["finish"],
+            "2027-01-11T17:00",
+            "A 3d left: Tue–Thu, B Fri+Mon"
+        );
+
+        let progress = |w: &mut Workspace, p: Value| w.execute(&h, "activity.progress", &p);
+        progress(
+            &mut w,
+            json!({ "activity": "A", "suspend": "2027-01-05T08:00", "resume": "2027-01-11T08:00" }),
+        )
+        .unwrap();
+        assert_eq!(
+            finish(&mut w)["finish"],
+            "2027-01-15T17:00",
+            "A Mon–Wed, B Thu–Fri"
+        );
+
+        for bad in [
+            json!({ "activity": "A", "resume": "2027-01-04T09:00" }),
+            json!({ "activity": "B", "suspend": "2027-01-05T08:00" }),
+            json!({ "activity": "A", "suspend": "2027-01-01T08:00" }),
+        ] {
+            let e = progress(&mut w, bad.clone()).unwrap_err();
+            assert_eq!(e.code, ErrorCode::Validation, "{bad}");
+        }
+
+        progress(
+            &mut w,
+            json!({ "activity": "A", "clear_suspend": true, "expected_finish": "2027-01-08T17:00" }),
+        )
+        .unwrap();
+        let s = finish(&mut w);
+        assert_eq!(
+            s["finish"], "2027-01-12T17:00",
+            "A ends on its expected finish"
+        );
+        assert_eq!(s["out_of_sequence"], json!([]));
+
+        progress(
+            &mut w,
+            json!({ "activity": "B", "actual_start": "2027-01-06T08:00" }),
+        )
+        .unwrap();
+        let s = finish(&mut w);
+        assert_eq!(
+            s["out_of_sequence"],
+            json!([{ "pred": "A", "succ": "B", "kind": "FS" }])
+        );
+        let health = w.execute(&h, "schedule.health", &json!({})).unwrap();
+        assert_eq!(health["out_of_sequence"].as_array().unwrap().len(), 1);
+    }
+
+    /// DSK-05: a stop request from another thread ends a long risk analysis,
+    /// and the next command starts with the switch cleared.
+    #[test]
+    fn dsk_05_cancel_stops_a_running_risk_analysis() {
+        let (mut w, h) = ws();
+        w.execute(&h, "sample.load", &json!({ "name": "bridge" }))
+            .unwrap();
+        let stop = w.cancel_handle();
+        let shared = Arc::new(std::sync::Mutex::new(w));
+        let worker = {
+            let (shared, h) = (shared.clone(), h.clone());
+            std::thread::spawn(move || {
+                shared.lock().unwrap().execute(
+                    &h,
+                    "simulation.run",
+                    &json!({ "iterations": 200_000 }),
+                )
+            })
+        };
+        // Keep asking: a request made before the command starts is cleared.
+        while !worker.is_finished() {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let e = worker.join().unwrap().unwrap_err();
+        assert!(e.message.contains("cancelled"), "{e}");
+        let again =
+            shared
+                .lock()
+                .unwrap()
+                .execute(&h, "simulation.run", &json!({ "iterations": 200 }));
+        assert!(again.is_ok(), "switch cleared for the next command");
     }
 
     #[test]
@@ -638,6 +827,18 @@ mod cloud {
         assert_eq!(conflicts[0]["server"], "From A");
         assert_eq!(conflicts[0]["yours"], "From B");
         assert_eq!(name_of(&b, "D10"), "From A");
+        assert_eq!(head(&b), head(&server_copy(&server)));
+        // One click puts B's value back; the next sync sends it.
+        let mut bad = conflicts[0].clone();
+        bad["field"] = json!("no_such_field");
+        let e = b
+            .execute(&owner, "sync.reapply", &json!({ "conflicts": [bad] }))
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::Validation);
+        b.execute(&owner, "sync.reapply", &json!({ "conflicts": conflicts }))
+            .unwrap();
+        assert_eq!(name_of(&b, "D10"), "From B");
+        assert!(sync(&mut b, &mut server, &owner).unwrap().is_empty());
         assert_eq!(head(&b), head(&server_copy(&server)));
     }
 
