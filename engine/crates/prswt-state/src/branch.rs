@@ -181,8 +181,10 @@ pub struct Branch {
     pub base: ProjectState,
     /// Current state.
     pub head: ProjectState,
-    /// Events since the fork (all events for live).
-    pub events: Vec<Event>,
+    /// Events since the fork (all events for live). A persistent vector:
+    /// every command snapshots the workspace for panic recovery, and a
+    /// plain `Vec` made that copy grow with the history.
+    pub events: imbl::Vector<Event>,
     undo: Vec<u64>,
     redo: Vec<u64>,
 }
@@ -240,7 +242,7 @@ impl Repo {
             },
             base: initial.clone(),
             head: initial,
-            events: Vec::new(),
+            events: imbl::Vector::new(),
             undo: Vec::new(),
             redo: Vec::new(),
         };
@@ -435,7 +437,7 @@ impl Repo {
             },
             base: parent.head.clone(),
             head: parent.head.clone(),
-            events: Vec::new(),
+            events: imbl::Vector::new(),
             undo: Vec::new(),
             redo: Vec::new(),
         };
@@ -565,7 +567,7 @@ impl Repo {
             event.changes.iter().map(|c| (&c.entity, c.after.clone())),
         )?;
         b.meta.version = event.version;
-        b.events.push(event);
+        b.events.push_back(event);
         Ok(())
     }
 
@@ -686,7 +688,7 @@ impl Branch {
             meta,
             base,
             head,
-            events: Vec::new(),
+            events: imbl::Vector::new(),
             undo: Vec::new(),
             redo: Vec::new(),
         }
@@ -722,7 +724,7 @@ fn record(
         changes,
     };
     b.head = next;
-    b.events.push(event.clone());
+    b.events.push_back(event.clone());
     event
 }
 

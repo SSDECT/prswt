@@ -89,7 +89,7 @@ impl Repo {
             .map(|b| FileBranch {
                 meta: b.meta.clone(),
                 base: b.base.clone(),
-                events: b.events.clone(),
+                events: b.events.iter().cloned().collect(),
                 undo: b.undo_stack().to_vec(),
                 redo: b.redo_stack().to_vec(),
             })
