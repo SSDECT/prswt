@@ -100,6 +100,10 @@ EOF
     if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
       codesign --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "$APP"
       codesign --verify --strict --verbose=2 "$APP"
+    else
+      # Ad-hoc seal: an unsealed bundle downloaded from the web is reported as
+      # "damaged"; a sealed one can be allowed in Privacy & Security.
+      codesign --force --deep --sign - "$APP"
     fi
     rm -f "dist/$NAME.dmg"
     hdiutil create -volname PRSWT -srcfolder "$APP" -ov -format UDZO "dist/$NAME.dmg" >/dev/null

@@ -2,7 +2,7 @@
 
 > **Updated:** 2026-10-26
 
-The release workflow (`.github/workflows/desktop-release.yml`) signs each package when its secrets are set in the GitHub repo (Settings ▸ Secrets and variables ▸ Actions). A `v*` tag without them fails, so no unsigned release ships. Manual runs (workflow_dispatch) still build unsigned for testing. Keep every value in Bitwarden too (`prswt/<name>`).
+The release workflow (`.github/workflows/desktop-release.yml`) signs each package when its secrets are set in the GitHub repo (Settings ▸ Secrets and variables ▸ Actions). Until they are set, a `v*` tag still releases, with a warning: Windows packages ship unsigned and macOS packages ad-hoc signed and not notarized, so users allow them once (SmartScreen ▸ Run anyway; Privacy & Security ▸ Open Anyway). v0.1.2 shipped this way. Manual runs (workflow_dispatch) build the same way for testing. Keep every value in Bitwarden too (`prswt/<name>`).
 
 ## Windows: Azure Trusted Signing
 
