@@ -163,14 +163,14 @@ const P6_FEATURES: &[(&str, &str, bool, &str)] = &[
     (
         "Scheduling",
         "Out-of-sequence progress detection report",
-        false,
-        "gaps.md",
+        true,
+        "prswt-cpm analysis.rs (out_of_sequence)",
     ),
     (
         "Scheduling",
         "Expected finish dates / suspend-resume",
-        false,
-        "gaps.md",
+        true,
+        "prswt-cpm passes.rs (CPM-19)",
     ),
     (
         "Calendars",
@@ -280,7 +280,7 @@ const P6_FEATURES: &[(&str, &str, bool, &str)] = &[
         "prswt-mcp",
     ),
     ("UI", "Gantt chart, activity table", true, "prswt-ui"),
-    ("UI", "Network (PERT) diagram", false, "gaps.md"),
+    ("UI", "Network (PERT) diagram", true, "prswt-ui network.rs"),
 ];
 
 fn parity(repo_root: &Path) -> Result<String, String> {

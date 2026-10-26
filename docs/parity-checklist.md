@@ -2,7 +2,7 @@
 
 Target: Oracle Primavera P6 EPPM (feature names only; clean-room).
 
-**Feature areas:** 29 / 35 covered.
+**Feature areas:** 32 / 35 covered.
 
 | Area | Feature | Status | Where |
 |---|---|---|---|
@@ -15,8 +15,8 @@ Target: Oracle Primavera P6 EPPM (feature names only; clean-room).
 | Scheduling | Critical: TF threshold / longest path | ✅ | `analysis.rs` |
 | Scheduling | Multiple float paths | ✅ | `float_paths` |
 | Scheduling | Activity types: task, resource-dependent, LOE, milestones, WBS summary | ✅ | `ActivityKind` |
-| Scheduling | Out-of-sequence progress detection report | ⬜ | `gaps.md` |
-| Scheduling | Expected finish dates / suspend-resume | ⬜ | `gaps.md` |
+| Scheduling | Out-of-sequence progress detection report | ✅ | `prswt-cpm analysis.rs (out_of_sequence)` |
+| Scheduling | Expected finish dates / suspend-resume | ✅ | `prswt-cpm passes.rs (CPM-19)` |
 | Calendars | Global/project/resource calendars, exceptions, inheritance | ✅ | `prswt-calendar` |
 | Calendars | Shifts crossing midnight | ✅ | `interval merge` |
 | WBS/OBS | WBS hierarchy with rollups | ✅ | `wbs_rollup` |
@@ -40,18 +40,30 @@ Target: Oracle Primavera P6 EPPM (feature names only; clean-room).
 | Interop | MS Project XML (MSPDI) | ✅ | `prswt-formats mspdi.rs` |
 | Agents | MCP server (tools/resources/prompts) | ✅ | `prswt-mcp` |
 | UI | Gantt chart, activity table | ✅ | `prswt-ui` |
-| UI | Network (PERT) diagram | ⬜ | `gaps.md` |
+| UI | Network (PERT) diagram | ✅ | `prswt-ui network.rs` |
 
-## Command catalog (52 commands)
+## Command catalog (64 commands)
 
 | Id | Label | P6 menu | Writes |
 |---|---|---|---|
+| `sync.link` | Link to cloud project | File ▸ Cloud | yes |
+| `sync.status` | Cloud sync status | File ▸ Cloud | no |
+| `sync.outbox` | Unsent cloud changes | File ▸ Cloud | no |
+| `sync.events` | Cloud events since | File ▸ Cloud | no |
+| `sync.receive` | Receive branch changes | File ▸ Cloud | yes |
+| `sync.reapply` | Keep my version | File ▸ Cloud ▸ Conflicts | yes |
+| `sync.apply` | Apply cloud changes | File ▸ Cloud | yes |
+| `sandbox.propose` | Propose sandbox for review | Project ▸ What-if ▸ Propose | yes |
 | `project.create` | New project | File ▸ New | yes |
-| `project.list` | Open projects | File ▸ Open | no |
+| `project.list` | Open projects | Window ▸ Projects | no |
 | `project.update` | Project details | Project ▸ Details | yes |
 | `sample.load` | Open sample project | File ▸ Samples | yes |
 | `commands.list` | List commands | Help ▸ Commands | no |
 | `commands.apply` | Apply raw command batch | Tools ▸ Batch | yes |
+| `project.lookups` | Pick lists | View ▸ Lookups | no |
+| `project.close` | Close project | File ▸ Close | yes |
+| `file.open_project` | Open project file | File ▸ Open | yes |
+| `file.save_project` | Save project file | File ▸ Save | no |
 | `file.import_xer` | Import XER | File ▸ Import ▸ Primavera XER | yes |
 | `file.export_xer` | Export XER | File ▸ Export ▸ Primavera XER | no |
 | `file.import_mspdi` | Import MS Project XML | File ▸ Import ▸ Microsoft Project XML | yes |
@@ -93,8 +105,8 @@ Target: Oracle Primavera P6 EPPM (feature names only; clean-room).
 | `mitigation.attach` | Accept mitigation | Tools ▸ Mitigation ▸ Accept | yes |
 | `simulation.run` | Run risk analysis | Tools ▸ Risk Analysis ▸ Run | no |
 | `simulation.get` | Risk analysis results | Tools ▸ Risk Analysis ▸ Results | no |
-| `sandbox.create` | Create what-if sandbox | Tools ▸ What-if ▸ New | no |
+| `sandbox.create` | Create what-if sandbox | Tools ▸ What-if ▸ New | yes |
 | `sandbox.list` | Sandboxes | Tools ▸ What-if | no |
 | `sandbox.diff` | Compare branches | Tools ▸ What-if ▸ Compare | no |
 | `sandbox.commit` | Commit sandbox to live | Tools ▸ What-if ▸ Commit | yes |
-| `sandbox.discard` | Discard sandbox | Tools ▸ What-if ▸ Discard | no |
+| `sandbox.discard` | Discard sandbox | Tools ▸ What-if ▸ Discard | yes |
