@@ -170,6 +170,21 @@ pub enum Command {
         /// Remaining duration.
         #[serde(default)]
         remaining: Option<WorkMinutes>,
+        /// Expected finish (P6); see `Activity::expected_finish`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_finish: Option<Instant>,
+        /// Suspend date.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        suspend: Option<Instant>,
+        /// Resume date.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume: Option<Instant>,
+        /// Removes the expected finish.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_expected_finish: bool,
+        /// Removes suspend and resume (the activity is running again).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_suspend: bool,
     },
     /// Record baseline metadata.
     CaptureBaseline {
@@ -371,11 +386,32 @@ impl Command {
                 actual_finish,
                 pct_complete,
                 remaining,
+                expected_finish,
+                suspend,
+                resume,
+                clear_expected_finish,
+                clear_suspend,
             } => {
                 let a = s
                     .activities
                     .get_mut(activity)
                     .ok_or_else(|| EngineError::not_found(format!("activity {activity}")))?;
+                if *clear_expected_finish {
+                    a.expected_finish = None;
+                }
+                if *clear_suspend {
+                    a.suspend = None;
+                    a.resume = None;
+                }
+                if expected_finish.is_some() {
+                    a.expected_finish = *expected_finish;
+                }
+                if suspend.is_some() {
+                    a.suspend = *suspend;
+                }
+                if resume.is_some() {
+                    a.resume = *resume;
+                }
                 if actual_start.is_some() {
                     a.actual_start = *actual_start;
                 }

@@ -72,6 +72,14 @@ pub fn activity_row(state: &ProjectState, s: &Schedule, i: usize) -> Value {
         "total_float_days": a.total_float.map(|w| w.as_days_f64(mpd)),
         "critical": a.critical,
         "near_critical": a.near_critical,
+        "constraint": src.and_then(|x| x.primary_constraint).map(|c| json!({
+            "kind": c.kind,
+            "date": c.date.map(t),
+        })),
+        "leveled_start": src.and_then(|x| x.leveled_start).map(t),
+        "expected_finish": src.and_then(|x| x.expected_finish).map(t),
+        "suspend": src.and_then(|x| x.suspend).map(t),
+        "resume": src.and_then(|x| x.resume).map(t),
     })
 }
 

@@ -66,6 +66,12 @@ pub struct Node {
     pub actual_start: Option<Instant>,
     /// Actual finish.
     pub actual_finish: Option<Instant>,
+    /// Expected finish (P6), when the project uses it; sets the remaining duration.
+    pub expected_finish: Option<Instant>,
+    /// Resume date of a suspended in-progress activity.
+    pub resume: Option<Instant>,
+    /// Leveled start (not-started activities only).
+    pub leveled_start: Option<Instant>,
 }
 
 impl Node {
@@ -173,6 +179,7 @@ impl ScheduleModel {
             nodes.push(node_from(
                 a,
                 cal_index.get(&a.calendar).copied().unwrap_or(0),
+                project.settings.use_expected_finish,
             ));
         }
 
@@ -324,7 +331,7 @@ impl ScheduleModel {
     }
 }
 
-fn node_from(a: &Activity, cal: usize) -> Node {
+fn node_from(a: &Activity, cal: usize, use_expected_finish: bool) -> Node {
     let status = if a.actual_finish.is_some() {
         Status::Completed
     } else if a.actual_start.is_some() {
@@ -367,6 +374,11 @@ fn node_from(a: &Activity, cal: usize) -> Node {
         status,
         actual_start: a.actual_start,
         actual_finish: a.actual_finish,
+        expected_finish: a.expected_finish.filter(|_| {
+            use_expected_finish && status != Status::Completed && !a.kind.is_milestone()
+        }),
+        resume: a.resume.filter(|_| status == Status::InProgress),
+        leveled_start: a.leveled_start.filter(|_| status == Status::NotStarted),
     }
 }
 
@@ -374,16 +386,21 @@ fn earliest_day(input: &ScheduleInput<'_>) -> NaiveDate {
     let p = input.project;
     let mut t = p.planned_start.min(p.data_date);
     for a in input.activities {
-        for x in [a.actual_start, a.actual_finish]
-            .into_iter()
-            .flatten()
-            .chain(
-                [a.primary_constraint, a.secondary_constraint]
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|c| c.date),
-            )
-        {
+        for x in [
+            a.actual_start,
+            a.actual_finish,
+            a.resume,
+            a.expected_finish,
+            a.leveled_start,
+        ]
+        .into_iter()
+        .flatten()
+        .chain(
+            [a.primary_constraint, a.secondary_constraint]
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c.date),
+        ) {
             t = t.min(x);
         }
     }

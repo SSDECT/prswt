@@ -128,6 +128,29 @@ mod oracle_n1 {
     }
 
     #[test]
+    fn cpm_09_alap_chain_slides_together() {
+        // M (ALAP milestone) -> B (ALAP 3d) -> C; X (10d) also drives C.
+        // B slides to finish when C starts (day 10), then M follows B.
+        let mut net = Net::new(WorkWeek::continuous(), DAY);
+        net.add("M", 0, ActivityKind::StartMilestone);
+        for (c, d) in [("B", 3), ("C", 2), ("X", 10)] {
+            net.add(c, d, ActivityKind::TaskDependent);
+        }
+        net.link("M", "B", RelationKind::FS, 0);
+        net.link("B", "C", RelationKind::FS, 0);
+        net.link("X", "C", RelationKind::FS, 0);
+        net.constrain_no_date("M", ConstraintKind::AsLateAsPossible);
+        net.constrain_no_date("B", ConstraintKind::AsLateAsPossible);
+        let s = net.run();
+        let (m, b) = (net.get(&s, "M"), net.get(&s, "B"));
+        assert_eq!((net.day(b.early_start), net.day(b.early_finish)), (7, 10));
+        assert_eq!(net.day(m.early_start), 7);
+        assert_eq!(b.free_float, Some(WorkMinutes(0)));
+        assert_eq!(b.total_float, Some(WorkMinutes(0)));
+        assert_eq!(m.total_float, Some(WorkMinutes(0)));
+    }
+
+    #[test]
     fn cpm_14_longest_path() {
         let mut net = n1();
         net.project.must_finish_by = Some(net.at(20));
@@ -342,6 +365,89 @@ mod progress_and_kinds {
             net.day(net.get(&s, "A").early_finish),
             8,
             "60% of 10d left from day 2"
+        );
+    }
+
+    /// Oracle (24h days): A 10d started day 0, data date 2, 8d left ⇒ EF 10.
+    /// Expected finish day 6 ⇒ remaining 4d, EF 6, B (2d, FS) 6..8, A TF 0.
+    /// Not-started C 5d with expected finish day 3 ⇒ data date 2..3 (1d left).
+    #[test]
+    fn cpm_19_expected_finish_sets_remaining() {
+        let make = |use_it| {
+            let mut net = Net::new(WorkWeek::continuous(), DAY);
+            net.project.data_date = net.at(2);
+            net.project.settings.use_expected_finish = use_it;
+            net.add("A", 10, ActivityKind::TaskDependent);
+            net.add("B", 2, ActivityKind::TaskDependent);
+            net.add("C", 5, ActivityKind::TaskDependent);
+            net.link("A", "B", RelationKind::FS, 0);
+            net.actual("A", Some(0), None);
+            net.acts[0].pct_complete = Decimal::new(20, 0);
+            let (a6, c3) = (net.at(6), net.at(3));
+            net.act_mut("A").expected_finish = Some(a6);
+            net.act_mut("C").expected_finish = Some(c3);
+            let s = net.run();
+            let d = |c| {
+                let a = net.get(&s, c);
+                (net.day(a.early_start), net.day(a.early_finish))
+            };
+            (d("A").1, d("B"), d("C"), net.get(&s, "A").total_float)
+        };
+        let (a, b, c, tf) = make(true);
+        assert_eq!((a, b, c), (6, (6, 8), (2, 3)));
+        assert_eq!(tf, Some(WorkMinutes(0)));
+        let (a, b, c, _) = make(false);
+        assert_eq!(
+            (a, b, c),
+            (10, (10, 12), (2, 7)),
+            "option off: durations rule"
+        );
+    }
+
+    /// A 10d, 40 % done (6d left), data date 2. Suspended at 2 and resumed
+    /// at 5 ⇒ EF 11; suspended without a resume date ⇒ continues at the data date, EF 8.
+    #[test]
+    fn cpm_19_suspend_and_resume() {
+        let make = |resume: Option<i64>| {
+            let mut net = Net::new(WorkWeek::continuous(), DAY);
+            net.project.data_date = net.at(2);
+            net.add("A", 10, ActivityKind::TaskDependent);
+            net.actual("A", Some(0), None);
+            net.acts[0].pct_complete = Decimal::new(40, 0);
+            net.acts[0].suspend = Some(net.at(2));
+            net.acts[0].resume = resume.map(|d| net.at(d));
+            let s = net.run();
+            net.day(net.get(&s, "A").early_finish)
+        };
+        assert_eq!(make(Some(5)), 11);
+        assert_eq!(make(None), 8);
+    }
+
+    #[test]
+    fn cpm_19_out_of_sequence_links() {
+        let mut net = Net::new(WorkWeek::continuous(), DAY);
+        net.project.data_date = net.at(3);
+        for c in ["X", "Y", "Z", "B"] {
+            net.add(c, 4, ActivityKind::TaskDependent);
+        }
+        net.link("X", "B", RelationKind::FS, 0); // X not finished, B started: broken
+        net.link("Y", "B", RelationKind::SS, 0); // Y started after B: broken
+        net.link("Z", "B", RelationKind::FS, 0); // Z finished before B started: fine
+        net.actual("Z", Some(0), Some(1));
+        net.actual("B", Some(1), None);
+        net.actual("Y", Some(2), None);
+        let s = net.run();
+        let oos: Vec<(String, RelationKind)> = s
+            .out_of_sequence()
+            .iter()
+            .map(|o| (s.model.nodes[o.pred].code.clone(), o.kind))
+            .collect();
+        assert_eq!(
+            oos,
+            vec![
+                ("X".into(), RelationKind::FS),
+                ("Y".into(), RelationKind::SS)
+            ]
         );
     }
 
@@ -735,6 +841,10 @@ impl Net {
             actual_finish: None,
             pct_complete: Decimal::ZERO,
             pct_type: PercentCompleteType::Duration,
+            expected_finish: None,
+            suspend: None,
+            resume: None,
+            leveled_start: None,
         });
     }
 

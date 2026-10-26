@@ -17,7 +17,7 @@ use prswt_core::ids::{ActivityId, WbsId};
 use prswt_core::{Instant, WorkMinutes};
 use serde::Serialize;
 
-pub use analysis::{DriverStep, FloatPath};
+pub use analysis::{DriverStep, FloatPath, OutOfSequence};
 pub use model::{Edge, Node, ScheduleInput, ScheduleModel, Status};
 pub use passes::{Dates, Driver, Variant};
 
@@ -157,6 +157,11 @@ impl Schedule {
     /// CPM-15: up to `k` total-float paths, most critical first.
     pub fn float_paths(&self, k: usize) -> Vec<FloatPath> {
         analysis::float_paths(&self.model, &self.dates, k)
+    }
+
+    /// CPM-19: links broken by actual dates (successor ahead of its predecessor).
+    pub fn out_of_sequence(&self) -> Vec<OutOfSequence> {
+        analysis::out_of_sequence(&self.model)
     }
 
     /// CPM-16: chain of what drove activity `i`'s early start, back to its root cause.

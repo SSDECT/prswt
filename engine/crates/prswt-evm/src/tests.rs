@@ -151,6 +151,10 @@ impl World {
             actual_finish: None,
             pct_complete: Decimal::ZERO,
             pct_type: PercentCompleteType::Physical,
+            expected_finish: None,
+            suspend: None,
+            resume: None,
+            leveled_start: None,
         };
         let acts = vec![mk("A"), mk("B")];
         let rels = vec![Relationship {

@@ -282,6 +282,10 @@ pub fn activity_add(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, En
         actual_finish: None,
         pct_complete: Decimal::ZERO,
         pct_type: PercentCompleteType::Duration,
+        expected_finish: None,
+        suspend: None,
+        resume: None,
+        leveled_start: None,
     };
     let id = a.id;
     let mut cmds = vec![Command::UpsertActivity {
@@ -386,13 +390,70 @@ pub fn activity_progress(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Valu
         actual_finish: p.opt_instant("actual_finish")?,
         pct_complete: pct,
         remaining: p.opt_duration("remaining", mpd)?,
+        expected_finish: p.opt_instant("expected_finish")?,
+        suspend: p.opt_instant("suspend")?,
+        resume: p.opt_instant("resume")?,
+        clear_expected_finish: p.bool_or("clear_expected_finish", false)?,
+        clear_suspend: p.bool_or("clear_suspend", false)?,
     };
+    check_suspend(state, id, &cmd)?;
     let mut cmds = vec![cmd];
     if let Some(ac) = p.opt_money("actual_cost")? {
         cmds.extend(split_actual_cost(state, id, ac)?);
     }
     let e = w.apply(ctx, pid, bid, cmds, None)?;
     Ok(json!({ "version": e.version }))
+}
+
+/// P6 rules for suspend/resume: only started, unfinished work can be
+/// suspended; suspend is on or after the actual start; resume follows suspend.
+fn check_suspend(state: &ProjectState, id: ActivityId, cmd: &Command) -> Result<(), EngineError> {
+    let Command::UpdateProgress {
+        actual_start,
+        actual_finish,
+        suspend,
+        resume,
+        clear_suspend,
+        ..
+    } = cmd
+    else {
+        return Ok(());
+    };
+    let a = state
+        .activities
+        .get(&id)
+        .ok_or_else(|| EngineError::not_found(format!("activity {id}")))?;
+    let keep =
+        |new: &Option<prswt_core::Instant>, old| if *clear_suspend { *new } else { new.or(old) };
+    let start = actual_start.or(a.actual_start);
+    let finish = actual_finish.or(a.actual_finish);
+    let (sus, res) = (keep(suspend, a.suspend), keep(resume, a.resume));
+    if res.is_some() && sus.is_none() {
+        return Err(EngineError::validation("resume needs a suspend date"));
+    }
+    let Some(sus) = sus else { return Ok(()) };
+    match start {
+        None => {
+            return Err(EngineError::validation(
+                "only a started activity can be suspended",
+            ));
+        }
+        Some(st) if sus < st => {
+            return Err(EngineError::validation(
+                "suspend cannot be before the actual start",
+            ));
+        }
+        Some(_) => {}
+    }
+    if finish.is_some() && (suspend.is_some() || resume.is_some()) {
+        return Err(EngineError::validation(
+            "a finished activity cannot be suspended",
+        ));
+    }
+    if res.is_some_and(|r| r < sus) {
+        return Err(EngineError::validation("resume cannot be before suspend"));
+    }
+    Ok(())
 }
 
 /// Spreads an activity's cost to date over its assignments and expenses in

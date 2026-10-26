@@ -98,6 +98,15 @@ pub struct ScheduleSettings {
     pub progress_mode: ProgressMode,
     /// Float basis.
     pub total_float_mode: TotalFloatMode,
+    /// P6 "Use Expected Finish Dates": activities with an expected finish
+    /// get their remaining duration from it.
+    #[serde(default = "yes")]
+    pub use_expected_finish: bool,
+}
+
+/// Serde default for options that are on unless saved otherwise.
+fn yes() -> bool {
+    true
 }
 
 impl Default for ScheduleSettings {
@@ -109,6 +118,7 @@ impl Default for ScheduleSettings {
             near_critical_threshold: WorkMinutes(5 * 8 * 60),
             progress_mode: ProgressMode::default(),
             total_float_mode: TotalFloatMode::default(),
+            use_expected_finish: true,
         }
     }
 }
@@ -557,6 +567,24 @@ pub struct Activity {
     pub pct_complete: Decimal,
     /// How `pct_complete` is interpreted.
     pub pct_type: PercentCompleteType,
+    /// P6 Expected Finish: when set (and the project uses expected finish
+    /// dates) the remaining duration is whatever work fits between the
+    /// remaining start and this date, so the forecast finish lands on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_finish: Option<Instant>,
+    /// P6 Suspend: date work stopped on an in-progress activity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspend: Option<Instant>,
+    /// P6 Resume: date suspended work restarts; remaining work cannot be
+    /// forecast before it. Without it a suspended activity resumes at the data date.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<Instant>,
+    /// Start chosen by resource leveling (P6 keeps leveled dates apart from
+    /// constraints). It holds a not-started activity's early start back
+    /// without touching its constraints; leveling again or clearing it
+    /// removes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leveled_start: Option<Instant>,
 }
 
 impl Activity {
@@ -1052,6 +1080,11 @@ pub struct Subgraph {
     pub links: Vec<Relationship>,
     /// Links to/from the main network.
     pub anchors: Vec<Anchor>,
+    /// Main-network activities the branch takes over: they drop out of the
+    /// network (simulation) or are cut to zero remaining (realization) when
+    /// the branch runs, so an abandoned activity cannot hold up the finish.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaces: Vec<ActivityId>,
 }
 
 /// A mitigation plan for one risk.
@@ -1160,6 +1193,10 @@ mod tests {
             actual_finish: None,
             pct_complete: Decimal::ZERO,
             pct_type: PercentCompleteType::Duration,
+            expected_finish: None,
+            suspend: None,
+            resume: None,
+            leveled_start: None,
         }
     }
 

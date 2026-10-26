@@ -343,6 +343,10 @@ impl World {
                 actual_finish: None,
                 pct_complete: Decimal::ZERO,
                 pct_type: PercentCompleteType::Duration,
+                expected_finish: None,
+                suspend: None,
+                resume: None,
+                leveled_start: None,
             });
         }
         for (a, b) in fs {

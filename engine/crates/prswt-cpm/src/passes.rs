@@ -35,6 +35,8 @@ pub enum Driver {
     Link(usize),
     /// A date constraint.
     Constraint,
+    /// Resource leveling held the start back.
+    Leveling,
     /// Actual dates (in progress or complete).
     Actual,
     /// Not scheduled (inactive or a WBS summary).
@@ -65,6 +67,9 @@ pub struct Dates {
     pub project_finish: Instant,
     /// Late end used for open ends: `must_finish_by` or the project finish.
     pub late_end: Instant,
+    /// Remaining duration each node was scheduled with (working minutes):
+    /// the variant's, or the work up to an expected finish.
+    pub remaining: Vec<i64>,
 }
 
 impl ScheduleModel {
@@ -86,6 +91,7 @@ impl ScheduleModel {
             edge_slack: vec![None; self.edges.len()],
             project_finish: self.planned_start,
             late_end: self.planned_start,
+            remaining: v.dur.to_vec(),
         };
         self.forward(v, &mut d)?;
         self.finish_loe(v, &mut d)?;
@@ -114,7 +120,8 @@ impl ScheduleModel {
                 }
                 Status::InProgress => {
                     d.es[j] = n.actual_start.unwrap_or(start);
-                    let mut rem_start = self.data_date;
+                    // Suspended work cannot be forecast before its resume date.
+                    let mut rem_start = self.data_date.max(n.resume.unwrap_or(self.data_date));
                     if self.settings.progress_mode == ProgressMode::RetainedLogic {
                         self.each_link_candidate(v, d, j, dur, |_, c| {
                             rem_start = rem_start.max(c);
@@ -123,10 +130,33 @@ impl ScheduleModel {
                     let s = cal.snap_start(rem_start)?;
                     d.ef[j] = cal.add_work(s, dur)?;
                     d.driver[j] = Driver::Actual;
+                    self.apply_expected_finish(d, j, s)?;
                 }
-                Status::NotStarted => self.forward_not_started(v, d, j, dur, cal, start)?,
+                Status::NotStarted => {
+                    self.forward_not_started(v, d, j, dur, cal, start)?;
+                    let es = d.es[j];
+                    self.apply_expected_finish(d, j, es)?;
+                }
             }
         }
+        Ok(())
+    }
+
+    /// P6 expected finish: the remaining duration becomes the work between
+    /// the remaining start and the expected finish (zero when it has passed).
+    fn apply_expected_finish(
+        &self,
+        d: &mut Dates,
+        j: usize,
+        rem_start: Instant,
+    ) -> Result<(), CalendarError> {
+        let Some(target) = self.nodes[j].expected_finish else {
+            return Ok(());
+        };
+        let cal = self.cal(j);
+        let work = cal.work_between(rem_start, target)?.0.max(0);
+        d.remaining[j] = work;
+        d.ef[j] = cal.add_work(rem_start, WorkMinutes(work))?;
         Ok(())
     }
 
@@ -167,6 +197,13 @@ impl ScheduleModel {
                 cand = b;
                 driver = Driver::Constraint;
             }
+        }
+        // Forward only: late dates ignore leveling, so the delay uses float (P6).
+        if let Some(l) = n.leveled_start
+            && l > cand
+        {
+            cand = l;
+            driver = Driver::Leveling;
         }
         let mut es = if n.kind == ActivityKind::FinishMilestone {
             cand
@@ -276,7 +313,7 @@ impl ScheduleModel {
                 continue;
             }
             let cal = self.cal(i);
-            let dur = WorkMinutes(v.dur[i]);
+            let dur = WorkMinutes(d.remaining[i]);
             let mut cand = d.late_end;
             for &e in self.out_edges(i) {
                 if let Some(c) = self.late_candidate(v, d, e, dur, cal)? {
@@ -402,8 +439,12 @@ impl ScheduleModel {
     }
 
     /// CPM-09: ALAP activities slide late by their free float.
+    ///
+    /// Successors go first (reverse topological order) and a slide hands its
+    /// slack to the links into the activity, so a chain of ALAP activities
+    /// slides together, as P6 does.
     fn apply_alap(&self, v: Variant<'_>, d: &mut Dates) -> Result<(), CalendarError> {
-        for i in 0..self.nodes.len() {
+        for &i in self.topo.iter().rev() {
             let n = &self.nodes[i];
             let alap = n
                 .constraints
@@ -412,11 +453,23 @@ impl ScheduleModel {
             if !alap || !v.node_active[i] || n.status != Status::NotStarted {
                 continue;
             }
-            let Some(ff) = d.ff[i].filter(|&f| f > 0) else {
-                continue;
+            // Free float as it stands now: a successor that slid has
+            // already widened the slack of its links.
+            let slack = self
+                .out_edges(i)
+                .iter()
+                .filter_map(|&e| d.edge_slack[e])
+                .min();
+            let ff = match (slack, d.ff[i], d.tf[i]) {
+                (Some(s), _, Some(tf)) => s.min(tf),
+                (Some(s), _, None) => s,
+                (None, f, _) => f.unwrap_or(0),
             };
+            if ff <= 0 {
+                continue;
+            }
             let cal = self.cal(i);
-            let dur = WorkMinutes(v.dur[i]);
+            let dur = WorkMinutes(d.remaining[i]);
             d.ef[i] = cal.add_work(d.ef[i], WorkMinutes(ff))?;
             d.es[i] = if dur.0 == 0 {
                 d.ef[i]

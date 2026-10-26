@@ -1,10 +1,11 @@
-//! CPM-12/14/15/16: critical sets, multiple float paths, driver explanation, WBS rollup.
+//! CPM-12/14/15/16: critical sets, multiple float paths, driver explanation,
+//! WBS rollup; CPM-19: out-of-sequence progress (P6 schedule log).
 
 use std::collections::{BTreeMap, HashMap};
 
 use prswt_core::Instant;
 use prswt_core::ids::WbsId;
-use prswt_core::model::{CriticalDefinition, WbsNode};
+use prswt_core::model::{CriticalDefinition, RelationKind, WbsNode};
 use serde::Serialize;
 
 use crate::model::{ScheduleModel, Status};
@@ -29,6 +30,46 @@ pub struct DriverStep {
     pub activity: usize,
     /// What drove it.
     pub driver: Driver,
+}
+
+/// A link whose successor has progressed further than the link allows
+/// (P6 "out-of-sequence"): e.g. an FS successor started before its
+/// predecessor finished. Lags are ignored, as in P6's schedule log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OutOfSequence {
+    /// Edge index in `model.edges`.
+    pub edge: usize,
+    /// Predecessor node index.
+    pub pred: usize,
+    /// Successor node index.
+    pub succ: usize,
+    /// Link type.
+    pub kind: RelationKind,
+}
+
+/// CPM-19: every link broken by actual dates, in edge order.
+pub fn out_of_sequence(m: &ScheduleModel) -> Vec<OutOfSequence> {
+    m.edges
+        .iter()
+        .enumerate()
+        .filter_map(|(e, edge)| {
+            let (p, s) = (&m.nodes[edge.pred], &m.nodes[edge.succ]);
+            // (successor's actual that the link governs, predecessor's actual it needs)
+            let (succ_actual, pred_actual) = match edge.kind {
+                RelationKind::FS => (s.actual_start, p.actual_finish),
+                RelationKind::SS => (s.actual_start, p.actual_start),
+                RelationKind::FF => (s.actual_finish, p.actual_finish),
+                RelationKind::SF => (s.actual_finish, p.actual_start),
+            };
+            let broken = succ_actual.is_some_and(|t| pred_actual.is_none_or(|need| need > t));
+            broken.then_some(OutOfSequence {
+                edge: e,
+                pred: edge.pred,
+                succ: edge.succ,
+                kind: edge.kind,
+            })
+        })
+        .collect()
 }
 
 fn eligible(m: &ScheduleModel, d: &Dates, i: usize) -> bool {
