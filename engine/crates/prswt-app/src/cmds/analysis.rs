@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use prswt_core::ids::{ActivityId, BaselineId, BranchId, ProjectId};
-use prswt_core::model::{BaselineMeta, Constraint, ConstraintKind};
-use prswt_core::{EngineError, Money};
+use prswt_core::model::BaselineMeta;
+use prswt_core::{EngineError, Instant, Money};
 use prswt_cpm::Schedule;
 use prswt_cpm::dcma::{DcmaContext, assess};
 use prswt_evm::{Baseline, EacMethod, evaluate};
@@ -88,13 +88,31 @@ pub fn run(w: &mut Workspace, _: &Ctx, v: &Value) -> Result<Value, EngineError> 
                 .collect::<Vec<_>>())
             .unwrap_or_default()
     );
+    out["out_of_sequence"] = out_of_sequence(&s);
     Ok(out)
+}
+
+/// CPM-19 rows for reports: `{pred, succ, kind}` by activity code.
+fn out_of_sequence(s: &Schedule) -> Value {
+    json!(
+        s.out_of_sequence()
+            .iter()
+            .map(|o| json!({
+                "pred": s.model.nodes[o.pred].code,
+                "succ": s.model.nodes[o.succ].code,
+                "kind": o.kind,
+            }))
+            .collect::<Vec<_>>()
+    )
 }
 
 pub fn activities(w: &mut Workspace, _: &Ctx, v: &Value) -> Result<Value, EngineError> {
     let p = P::of(v)?;
     let (pid, bid) = w.target(&p)?;
     let s = w.schedule(pid, bid)?;
+    // A baseline that cannot be rebuilt only drops the comparison columns.
+    let baseline = baseline_dates(w, pid, bid).ok().flatten();
+    let with_links = p.bool_or("links", false)?;
     let state = &w.repo_ref(pid)?.branch(bid)?.head;
     let only_crit = p.bool_or("critical", false)?;
     let text = p.opt_str("text")?.map(str::to_lowercase);
@@ -129,9 +147,75 @@ pub fn activities(w: &mut Workspace, _: &Ctx, v: &Value) -> Result<Value, Engine
         .into_iter()
         .skip(offset)
         .take(limit)
-        .map(|i| activity_row(state, &s, i))
+        .map(|i| {
+            let mut row = activity_row(state, &s, i);
+            let n = &s.model.nodes[i];
+            if let Some((_, dates)) = &baseline
+                && let Some(&(bs, bf)) = dates.get(&n.id)
+            {
+                let cal = s.model.cal(i);
+                let variance = cal
+                    .work_between(bf, s.dates.ef[i])
+                    .map(|w| days(w.0, cal.minutes_per_day()))
+                    .ok();
+                row["baseline_start"] = json!(t(bs));
+                row["baseline_finish"] = json!(t(bf));
+                row["finish_variance"] = json!(variance);
+            }
+            if with_links {
+                row["predecessors"] = json!(
+                    s.model
+                        .in_edges(i)
+                        .iter()
+                        .map(|&e| {
+                            let edge = &s.model.edges[e];
+                            json!({
+                                "activity": s.model.nodes[edge.pred].code,
+                                "type": edge.kind,
+                                "driving": s.dates.edge_slack[e] == Some(0),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                );
+            }
+            row
+        })
         .collect();
-    Ok(json!({ "total": total, "offset": offset, "items": rows }))
+    Ok(json!({
+        "total": total,
+        "offset": offset,
+        "baseline": baseline.map(|b| b.0),
+        "items": rows,
+    }))
+}
+
+/// Early dates of every activity in the latest baseline (`None` without one).
+fn baseline_dates(
+    w: &Workspace,
+    pid: ProjectId,
+    bid: BranchId,
+) -> Result<Option<(String, HashMap<ActivityId, (Instant, Instant)>)>, EngineError> {
+    let head = &w.repo_ref(pid)?.branch(bid)?.head;
+    let Some(meta) = head.baselines.values().max_by_key(|b| b.captured_at) else {
+        return Ok(None);
+    };
+    let state = w.repo_ref(pid)?.state_at(bid, meta.branch_version)?;
+    let sn = state.snapshot();
+    let s = prswt_cpm::schedule(&prswt_cpm::ScheduleInput {
+        project: &state.project,
+        calendars: &sn.calendars,
+        wbs: &sn.wbs,
+        activities: &sn.activities,
+        relationships: &sn.relationships,
+    })?;
+    let dates = s
+        .model
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.id, (s.dates.es[i], s.dates.ef[i])))
+        .collect();
+    Ok(Some((meta.name.clone(), dates)))
 }
 
 pub fn activity(w: &mut Workspace, _: &Ctx, v: &Value) -> Result<Value, EngineError> {
@@ -249,7 +333,11 @@ pub fn health(w: &mut Workspace, _: &Ctx, v: &Value) -> Result<Value, EngineErro
             baseline_finish: None,
         },
     );
-    Ok(serde_json::to_value(report).unwrap_or(Value::Null))
+    let mut out = serde_json::to_value(report).unwrap_or(Value::Null);
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("out_of_sequence".into(), out_of_sequence(&s));
+    }
+    Ok(out)
 }
 
 fn res_ctx<'a>(s: &'a Schedule, sn: &'a Snapshot) -> Result<ResourceContext<'a>, EngineError> {
@@ -324,8 +412,23 @@ pub fn overallocation(w: &mut Workspace, _: &Ctx, v: &Value) -> Result<Value, En
 pub fn level(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineError> {
     let p = P::of(v)?;
     let (pid, bid) = w.target(&p)?;
-    let s = w.schedule(pid, bid)?;
-    let sn = snap(w, pid, bid)?;
+    if p.bool_or("clear", false)? {
+        return clear_leveling(w, ctx, pid, bid);
+    }
+    // Level from the unleveled network (P6 levels from early dates), so a
+    // second run replaces the first instead of stacking delays on it.
+    let mut sn = snap(w, pid, bid)?;
+    for a in &mut sn.activities {
+        a.leveled_start = None;
+    }
+    let project = w.repo_ref(pid)?.branch(bid)?.head.project.clone();
+    let s = prswt_cpm::schedule(&prswt_cpm::ScheduleInput {
+        project: &project,
+        calendars: &sn.calendars,
+        wbs: &sn.wbs,
+        activities: &sn.activities,
+        relationships: &sn.relationships,
+    })?;
     let only: Vec<String> = p.opt("resources")?.unwrap_or_default();
     let rctx = res_ctx(&s, &sn)?;
     let opts = LevelOptions {
@@ -354,22 +457,28 @@ pub fn level(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineErr
         "unresolved": r.unresolved.iter().filter_map(|id| s.index_of(*id).map(|i| s.model.nodes[i].code.clone())).collect::<Vec<_>>(),
     });
     if p.bool_or("apply", false)? {
-        // P6 keeps leveled dates; we persist them as start-no-earlier-than constraints.
+        // Leveled starts are kept apart from constraints (P6 leveled dates):
+        // set on the delayed activities, removed from the rest.
         let state = &w.repo_ref(pid)?.branch(bid)?.head;
-        let cmds: Vec<Command> = r
+        // Only resourced work keeps a leveled start; activities pushed by
+        // logic alone follow their predecessors on the next calculation.
+        let resourced: HashSet<ActivityId> = sn.assignments.iter().map(|a| a.activity).collect();
+        let delayed: HashMap<ActivityId, Instant> = r
             .delayed
             .iter()
-            .filter_map(|(id, _)| {
-                let mut a = state.activities.get(id)?.clone();
-                let i = s.index_of(*id)?;
-                a.primary_constraint = Some(Constraint {
-                    kind: ConstraintKind::StartNoEarlierThan,
-                    date: Some(r.start[i]),
-                });
-                a.secondary_constraint = None;
-                Some(Command::UpsertActivity {
+            .filter(|(id, _)| resourced.contains(id))
+            .filter_map(|(id, _)| Some((*id, r.start[s.index_of(*id)?])))
+            .collect();
+        let cmds: Vec<Command> = state
+            .activities
+            .values()
+            .filter(|a| a.leveled_start != delayed.get(&a.id).copied())
+            .map(|a| {
+                let mut a = a.clone();
+                a.leveled_start = delayed.get(&a.id).copied();
+                Command::UpsertActivity {
                     activity: Box::new(a),
-                })
+                }
             })
             .collect();
         if !cmds.is_empty() {
@@ -377,6 +486,35 @@ pub fn level(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineErr
             out["version"] = json!(e.version);
         }
         out["applied"] = json!(true);
+    }
+    Ok(out)
+}
+
+/// Removes every leveled start (P6 "clear leveling").
+fn clear_leveling(
+    w: &mut Workspace,
+    ctx: &Ctx,
+    pid: ProjectId,
+    bid: BranchId,
+) -> Result<Value, EngineError> {
+    let state = &w.repo_ref(pid)?.branch(bid)?.head;
+    let cmds: Vec<Command> = state
+        .activities
+        .values()
+        .filter(|a| a.leveled_start.is_some())
+        .map(|a| {
+            let mut a = a.clone();
+            a.leveled_start = None;
+            Command::UpsertActivity {
+                activity: Box::new(a),
+            }
+        })
+        .collect();
+    let cleared = cmds.len();
+    let mut out = json!({ "cleared": cleared });
+    if cleared > 0 {
+        let e = w.apply(ctx, pid, bid, cmds, None)?;
+        out["version"] = json!(e.version);
     }
     Ok(out)
 }
