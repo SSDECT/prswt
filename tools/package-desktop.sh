@@ -106,7 +106,12 @@ EOF
       codesign --force --deep --sign - "$APP"
     fi
     rm -f "dist/$NAME.dmg"
-    hdiutil create -volname PRSWT -srcfolder "$APP" -ov -format UDZO "dist/$NAME.dmg" >/dev/null
+    # hdiutil fails now and then with "Resource busy" on CI runners; retry.
+    for try in 1 2 3 4 5; do
+      hdiutil create -volname PRSWT -srcfolder "$APP" -ov -format UDZO "dist/$NAME.dmg" >/dev/null && break
+      [ "$try" = 5 ] && exit 1
+      sleep 10
+    done
     rm -rf "$APP"
     if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
       codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "dist/$NAME.dmg"
