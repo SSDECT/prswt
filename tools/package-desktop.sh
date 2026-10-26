@@ -3,10 +3,11 @@
 #
 #   tools/package-desktop.sh [TARGET]
 #
-# Output in dist/:
-#   Windows  prswt-<ver>-windows-x86_64.zip      (prswt.exe)
-#   Linux    prswt-<ver>-linux-x86_64.tar.gz      (prswt + prswt.desktop)
-#   macOS    prswt-<ver>-macos-<arch>.dmg         (PRSWT.app)
+# Output in dist/ (names carry no version, so the README's
+# releases/latest/download/<name> links always fetch the newest release):
+#   Windows  PRSWT-windows-x64.zip                (prswt.exe)
+#   Linux    PRSWT-linux-x64.tar.gz               (prswt + prswt.desktop)
+#   macOS    PRSWT-macos-apple-silicon.dmg / PRSWT-macos-intel.dmg (PRSWT.app)
 # With TARGET (a Rust target triple) it cross-builds that target instead of
 # the host's, e.g. x86_64-apple-darwin on an Apple Silicon Mac.
 #
@@ -39,7 +40,7 @@ build() {
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     OUT=$(build | tail -1)
-    NAME="prswt-$VERSION-windows-x86_64"
+    NAME="PRSWT-windows-x64"
     rm -rf "dist/$NAME" && mkdir -p "dist/$NAME"
     cp "$OUT/prswt.exe" "dist/$NAME/"
     cp README.md "dist/$NAME/README.md" 2>/dev/null || true
@@ -49,8 +50,8 @@ case "$(uname -s)" in
     ;;
   Linux)
     OUT=$(build | tail -1)
-    ARCH=$(uname -m)
-    NAME="prswt-$VERSION-linux-$ARCH"
+    case "$(uname -m)" in x86_64) ARCH=x64 ;; *) ARCH=$(uname -m) ;; esac
+    NAME="PRSWT-linux-$ARCH"
     rm -rf "dist/$NAME" && mkdir -p "dist/$NAME"
     cp "$OUT/prswt" "dist/$NAME/"
     cat > "dist/$NAME/prswt.desktop" <<EOF
@@ -94,7 +95,8 @@ EOF
   </dict></array>
 </dict></plist>
 EOF
-    NAME="prswt-$VERSION-macos-$ARCH"
+    case "$ARCH" in arm64|aarch64) MAC=apple-silicon ;; *) MAC=intel ;; esac
+    NAME="PRSWT-macos-$MAC"
     if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
       codesign --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "$APP"
       codesign --verify --strict --verbose=2 "$APP"

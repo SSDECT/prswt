@@ -5,7 +5,8 @@
 #
 # Signing (docs/signing.md): Windows through Azure Trusted Signing, macOS with
 # a Developer ID certificate plus notarization. Each runs when its secrets are
-# set; a release tag without them fails instead of shipping unsigned.
+# set. A release tag fails without the macOS secrets; Windows only warns until
+# SignPath (which signs released versions only) is set up.
 name: desktop-release
 
 on:
@@ -36,11 +37,15 @@ jobs:
       MAC_SIGN: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
     steps:
       - name: Signing configured for release
-        if: startsWith(github.ref, 'refs/tags/v') && ((runner.os == 'Windows' && env.WIN_SIGN != 'true') || (runner.os == 'macOS' && env.MAC_SIGN != 'true'))
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'macOS' && env.MAC_SIGN != 'true'
         shell: bash
         run: |
-          echo "::error::release tags must be signed; add the signing secrets (docs/signing.md)"
+          echo "::error::macOS release builds must be signed; add the signing secrets (docs/signing.md)"
           exit 1
+      - name: Windows signing not configured
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows' && env.WIN_SIGN != 'true'
+        shell: bash
+        run: echo "::warning::prswt.exe ships unsigned (docs/signing.md)"
       - uses: actions/checkout@v4
       - name: Rust toolchain
         shell: bash
@@ -107,3 +112,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          body_path: docs/release-notes.md

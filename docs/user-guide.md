@@ -1,6 +1,6 @@
 # PRSWT — руководство пользователя
 
-> **Версия:** 0.1.1 · **Обновлено:** 2026-10-26
+> **Версия:** 0.1.2 · **Обновлено:** 2026-10-26
 
 PRSWT — программа для календарного планирования и анализа рисков проектов (в духе Primavera P6 и Primavera Risk Analysis). Основной способ работы — настольное приложение: оно работает без интернета и без учётной записи. Облако (prswt.juz.ai) нужно только для совместной работы и синхронизации между компьютерами.
 
@@ -8,13 +8,13 @@ PRSWT — программа для календарного планирова�
 
 ## 1. Установка
 
-1. Скачайте пакет со страницы релиза: <https://github.com/SSDECT/prswt/releases/tag/v0.1.1>
-   - Windows: `prswt-0.1.1-windows-x86_64.zip` — распакуйте и запустите `prswt.exe`.
-   - macOS: `.dmg` (Apple Silicon `aarch64` или Intel `x86_64`) — перетащите `PRSWT.app` в «Программы».
-   - Linux: `.tar.gz` — распакуйте, запустите `prswt` (нужны OpenGL и X11 или Wayland).
-2. Программа пока не подписана, поэтому при первом запуске система предупредит:
+1. Скачайте последнюю версию (ссылки всегда ведут на новейший релиз):
+   - Windows 10/11: [PRSWT-windows-x64.zip](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-windows-x64.zip) — распакуйте и запустите `prswt.exe`.
+   - macOS на Apple M1–M4: [PRSWT-macos-apple-silicon.dmg](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-macos-apple-silicon.dmg); на Intel: [PRSWT-macos-intel.dmg](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-macos-intel.dmg) — откройте и перетащите PRSWT в «Программы». Какой у вас Mac: меню Apple ▸ «Об этом Mac».
+   - Linux: [PRSWT-linux-x64.tar.gz](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-linux-x64.tar.gz) — распакуйте, запустите `prswt` (нужны OpenGL и X11 или Wayland).
+2. Если сборка ещё не подписана, при первом запуске система предупредит:
    - Windows SmartScreen: «Подробнее» → «Выполнить в любом случае».
-   - macOS: правый клик по `PRSWT.app` → «Открыть» → «Открыть».
+   - macOS: запустите PRSWT один раз, затем «Системные настройки ▸ Конфиденциальность и безопасность ▸ Всё равно открыть».
 
 ## 2. Первый проект
 

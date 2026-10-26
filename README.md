@@ -2,6 +2,16 @@
 
 A clean-room, Rust-native, MCP-first scheduling and quantitative-risk engine in the class of Oracle Primavera P6 + Primavera Risk Analysis. The math engine is headless; the desktop UI, CLI, HTTP API and MCP server are equal clients of one command catalog.
 
+## Download
+
+| Windows 10/11 | macOS (Apple Silicon) | macOS (Intel) | Linux x64 |
+|---|---|---|---|
+| [**PRSWT-windows-x64.zip**](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-windows-x64.zip) | [**PRSWT-macos-apple-silicon.dmg**](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-macos-apple-silicon.dmg) | [**PRSWT-macos-intel.dmg**](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-macos-intel.dmg) | [**PRSWT-linux-x64.tar.gz**](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-linux-x64.tar.gz) |
+| Unzip, run `prswt.exe` | Open, drag to Applications | Open, drag to Applications | Unpack, run `prswt` |
+
+No installer, no account, works offline. Start with **File ▸ Open sample**, or open the tutorial project [docs/examples/office-building.prswt](docs/examples/office-building.prswt). [User guide (RU)](docs/user-guide.md) · [all releases](https://github.com/SSDECT/prswt/releases)
+
+## Features
 - **Scheduling:** CPM with FS/SS/FF/SF, leads/lags, lag calendars, ten constraint types, must-finish-by and negative float, retained logic / progress override, LOE, milestones, WBS rollups, multiple float paths, DCMA-14.
 - **Resources & cost:** curves, capacity, overallocation, serial leveling, cost rollups. **EVM:** PV/EV/AC, CPI/SPI, three EAC methods, earned schedule.
 - **Risk:** three-point estimates, risk events bound to activities/WBS/resources, pre/post mitigation, contingent branches, secondary triggers, correlation (Gaussian copula), Monte Carlo with reproducible common-random-number comparisons, risk tornado, criticality and sensitivity.
