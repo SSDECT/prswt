@@ -21,7 +21,7 @@ Decision: [[ADR-0009-desktop-first]] (user, 2026-10-24). The desktop app is loca
 | SRV-03 | Server trimmed to API + MCP + sign-in + token page; WASM web UI and `prswt-web` removed; redeployed | `/` shows the account/token page, `/v1/*` and `/mcp` unchanged |
 
 ## Status (2026-10-25)
-DSK-01..07 and SRV-03 done. DSK-08: packaging script and CI workflow ready; Windows package built and smoke-tested here; Linux built in Docker on VM 130 (links only libc; GUI libraries loaded at run time; exits cleanly without a display), packaged as dist/prswt-0.1.0-linux-x86_64.tar.gz; macOS needs the CI run (repository not on GitHub yet).
+DSK-01..07 and SRV-03 done. DSK-08: packaging script and CI workflow ready; Windows package built and smoke-tested here; Linux built in Docker on the app server (links only libc; GUI libraries loaded at run time; exits cleanly without a display), packaged as dist/prswt-0.1.0-linux-x86_64.tar.gz; macOS needs the CI run (repository not on GitHub yet).
 User feedback that shaped DSK-06/07: no typed dates or codes — pick from calendars and lists.
 
 ## Order

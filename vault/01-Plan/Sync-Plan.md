@@ -16,4 +16,4 @@ Decision: [[ADR-0010-cloud-sync-collaboration]] (user, 2026-10-25).
 
 ## Status (2026-10-25)
 All four built and tested (engine, store against PostgreSQL, server router, desktop end to end against a local server: download, push of an agent's sandbox + proposal, What-if review list).
-Waiting: deployment to VM 130 (needs the user's go-ahead), Azure app registration multi-tenant switch for other organizations.
+Waiting: deployment to the app server (needs the user's go-ahead), Azure app registration multi-tenant switch for other organizations.

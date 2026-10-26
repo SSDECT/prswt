@@ -137,7 +137,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] SRV-01 `prswt-server`: API + MCP + sign-in in one axum binary
 - [x] SRV-02 HTTPS on the origin (rustls, hot certificate reload) + Let's Encrypt DNS-01 auto-renewal (`cert-renew` service)
 - [x] AUTH-01..04 Google/Microsoft OIDC, sessions, personal access tokens, allowlist
-- [x] OPS-01/02 Docker deployment on VM 130, Cloudflare tunnel route (origin certificate verified)
+- [x] OPS-01/02 Docker deployment on the app server, Cloudflare tunnel route (origin certificate verified)
 - [x] SRV-03 Trimmed to API + MCP + sign-in + token page; WASM web UI and `prswt-web` removed; redeployed ([[ADR-0009-desktop-first]])
 
 ## P11 — Desktop app ([[Desktop-Plan]])

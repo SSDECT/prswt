@@ -1,11 +1,13 @@
 # Deploying PRSWT to `prswt.juz.ai`
 
-> **Last updated:** 2026-10-24 · Target: VM 130 `apps` (Proxmox vm01 guest, Debian 13, Docker), Tailscale `100.64.0.13`.
+> **Last updated:** 2026-10-24 · Target: the app server (Debian 13, Docker), Tailscale `<server-tailscale-ip>`.
+
+Placeholders: `<server-tailscale-ip>` is the server's Tailscale address, `<server-lan-ip>` its address on the internal network, `<user>` the SSH user. Fill in your own.
 
 ```
-Browser / Claude ──HTTPS──▶ Cloudflare edge ──Tunnel (cloudflared on VM 130)──▶ 127.0.0.1:8460 ──▶ prswt-server ──▶ postgres (internal network)
+Browser / Claude ──HTTPS──▶ Cloudflare edge ──Tunnel (cloudflared on the app server)──▶ 127.0.0.1:8460 ──▶ prswt-server ──▶ postgres (internal network)
 ```
-TLS terminates at Cloudflare. Nothing is published to the internet from VM 130; the server binds only on loopback `127.0.0.1` (cloudflared on the same VM uses host networking).
+TLS terminates at Cloudflare. Nothing is published to the internet from the app server; the server binds only on loopback `127.0.0.1` (cloudflared on the same VM uses host networking).
 
 ## One-time prerequisites (owner)
 1. **Google sign-in**: Google Cloud Console → APIs & Services → Credentials → OAuth client (Web application).
@@ -15,7 +17,7 @@ TLS terminates at Cloudflare. Nothing is published to the internet from VM 130; 
    - Platform "Web", redirect URI `https://prswt.juz.ai/auth/callback/microsoft`.
    - Create a client secret.
    - Choose single tenant (Juz.ai only, then `MICROSOFT_TENANT=<tenant id>`) or multi-tenant (`MICROSOFT_TENANT=organizations` plus `MICROSOFT_ALLOWED_TENANTS`). `MICROSOFT_TENANT` has no default: the server refuses to start without it.
-3. **Cloudflare Tunnel** (JuzSign tunnel): add a published application route `prswt.juz.ai` → **HTTPS** `127.0.0.1:8460`. Under *Additional settings → TLS*, set **Origin Server Name** to `prswt.juz.ai` and leave *No TLS Verify* **off**. cloudflared then verifies PRSWT's Let's Encrypt certificate end to end.
+3. **Cloudflare Tunnel** (the existing tunnel): add a published application route `prswt.juz.ai` → **HTTPS** `127.0.0.1:8460`. Under *Additional settings → TLS*, set **Origin Server Name** to `prswt.juz.ai` and leave *No TLS Verify* **off**. cloudflared then verifies PRSWT's Let's Encrypt certificate end to end.
 4. **Allowed emails**: the comma-separated list for `PRSWT_ALLOWED_EMAILS`.
 
 Secrets go **only** into `~/prswt/deploy/.env` on the server (`chmod 600`, owner `srs`). They move to Bitwarden later.
@@ -26,14 +28,14 @@ Secrets go **only** into `~/prswt/deploy/.env` on the server (`chmod 600`, owner
    - Create `.env` from `.env.example`.
    - Generate the DB password: `POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=')`.
 3. Run `docker compose up -d --build`. The image compiles the server inside Docker (Rust on Debian trixie).
-4. Smoke test from VM 130: `curl -s http://127.0.0.1:8460/healthz` should print `ok`, and `curl -sI http://127.0.0.1:8460/` should redirect to `/login`.
+4. Smoke test from the app server: `curl -s http://127.0.0.1:8460/healthz` should print `ok`, and `curl -sI http://127.0.0.1:8460/` should redirect to `/login`.
 5. Public test: open `https://prswt.juz.ai` → sign in → **Account** (the only page; there is no web UI) → create a token → connect Claude:
    `claude mcp add --transport http prswt https://prswt.juz.ai/mcp --header "Authorization: Bearer <token>"`
 
 ## TLS on the last hop
 PRSWT serves HTTPS itself (`PRSWT_TLS_CERT`/`PRSWT_TLS_KEY`). The certificate is from Let's Encrypt, obtained by DNS-01 with the Cloudflare DNS token:
 - `printf '%s
-' "$TOKEN" | ./le_cert.sh run` issues it; the key is generated on VM 130 and never leaves it.
+' "$TOKEN" | ./le_cert.sh run` issues it; the key is generated on the app server and never leaves it.
 - Files are in `tls/certificates/`, mode 600, owned by `srs`. The container runs as uid 1000 and mounts `tls/` read-only.
 - Renewal: the `cert-renew` compose service checks daily and renews below 30 days left, using `tls/cf.env` (`CF_DNS_API_TOKEN=…`, mode 600). The server checks the certificate file hourly and hot-reloads it, so no restart is needed. If a reload fails, it keeps the old certificate.
 - Without renewal the certificate expires after 90 days (the current one on 2027-01-21).

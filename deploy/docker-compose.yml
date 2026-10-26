@@ -1,4 +1,4 @@
-# PRSWT on VM 130 `apps` (~/prswt). Public access is via the existing
+# PRSWT on the app server (~/prswt). Public access is via the existing
 # Cloudflare Tunnel: prswt.juz.ai -> https://127.0.0.1:8460 (loopback, TLS verified with origin server name prswt.juz.ai). Nothing else is
 # published; the database has no host port.
 name: prswt

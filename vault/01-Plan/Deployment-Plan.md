@@ -5,11 +5,11 @@ updated: 2026-10-24
 ---
 # Deployment plan: publish PRSWT on the user's Linux VPS
 
-Decisions (user, 2026-10-24): host **prswt.juz.ai** on VM 130 `apps` (Proxmox vm01, Tailscale 100.64.0.13) via the existing Cloudflare Tunnel · Linux VPS over SSH · sign-in with Google/Microsoft · web UI + remote MCP + HTTP API · own domain.
+Decisions (user, 2026-10-24): host **prswt.juz.ai** on the app server (Tailscale `<server-tailscale-ip>`) via the existing Cloudflare Tunnel · Linux VPS over SSH · sign-in with Google/Microsoft · web UI + remote MCP + HTTP API · own domain.
 
 ## Target architecture
 ```
-Internet ─HTTPS─▶ Cloudflare edge ─tunnel (cloudflared on VM 130)─▶ prswt-server 10.10.0.10:8460 ─▶ PostgreSQL (compose-internal only)
+Internet ─HTTPS─▶ Cloudflare edge ─tunnel (cloudflared on the app server)─▶ prswt-server <server-lan-ip>:8460 ─▶ PostgreSQL (compose-internal only)
                                                          ├─ /            web UI (egui → WASM, static files)
                                                          ├─ /auth/*      OIDC login (Google, Microsoft), sessions
                                                          ├─ /v1/*        HTTP API (session cookie or bearer token)
@@ -27,7 +27,7 @@ Internet ─HTTPS─▶ Cloudflare edge ─tunnel (cloudflared on VM 130)─▶ 
 | MCP-13 | Streamable HTTP transport for MCP (`POST /mcp`, JSON replies) | `claude mcp add --transport http prswt https://<domain>/mcp --header "Authorization: Bearer …"` |
 | WEB-01 | Web build of the UI: `PrswtApp` over a `Backend` trait (local workspace or remote HTTP via fetch) | eframe web + trunk; async request queue |
 | OPS-01 | Multi-stage Dockerfile, docker-compose (server, postgres) in `/opt/prswt`, healthchecks, volumes, backups | non-root, read-only FS; TLS terminates at Cloudflare |
-| OPS-02 | Deploy over Tailscale SSH to `srs@100.64.0.13`; tunnel public hostname `prswt.juz.ai` → `http://10.10.0.10:8460` | secrets in `/opt/prswt/.env` (0600, owner 1000) → Bitwarden |
+| OPS-02 | Deploy over Tailscale SSH to `<user>@<server-tailscale-ip>`; tunnel public hostname `prswt.juz.ai` → `http://<server-lan-ip>:8460` | secrets in `/opt/prswt/.env` (0600, owner 1000) → Bitwarden |
 | OPS-03 | System test against the public URL (login redirect, token MCP, API, web UI loads) | extends tools/system_test.py |
 
 ## Needed from the user
