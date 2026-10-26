@@ -57,6 +57,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] RES-03 Usage histograms (hour/day/week), overallocation detection
 - [x] RES-04 Serial SGS leveling with priority rules, preserve-float option
 - [x] RES-05 Resource-dependent duration
+- [x] RES-07 Leveling report taken from the rescheduled network (milestones, `finish_after` match the next run)
 - [x] RES-06 Leveled starts kept apart from constraints (P6 leveled dates), re-leveling from the unleveled network, `clear`
 - [x] COST-01 Assignment cost, expenses, rollup by WBS/OBS/cost account
 - [x] EVM-01 Baseline capture (state pointer) + time-phased budget
@@ -80,6 +81,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] RSK-13 Deterministic RealizeRisk pipeline ([[03-Pipeline]] §B) + delta report
 - [x] RSK-14 Analytic validation (serial sum of triangulars, parallel max) + benchmark 5k×5k < 10 s
 - [x] RSK-15 Mitigation subgraph generator (5 strategies)
+- [x] RSK-17 Tornado effect of a risk that occurs in every iteration (same iterations re-run without it)
 - [x] RSK-16 Uncertain resource degradation sampled as capacity share with duration ÷ c; alternative paths take the replaced activity out of the network
 
 ## P5 — State & sandboxes (`prswt-state`)
@@ -92,6 +94,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] ST-07 Property tests invariants 4–6
 - [x] ST-08 Undo/redo (bounded 100 steps)
 - [x] ST-09 Undo/redo history saved in `.prswt` files (checked on open)
+- [x] ST-11 Scenario test suite (`tools/scenario_test.py`, 13 scenarios, 89 checks); codes must be non-blank, ≤ 100 chars; reported constraint names accepted as input
+- [x] ST-10 Branch event log is a persistent vector: the per-command panic snapshot no longer copies the history (write 21 ms → 0.4 ms at 4,000 activities)
 - [x] APP-01 `prswt-app` service layer, compiled-model cache per (branch, version)
 - [x] APP-02 `CommandSpec` registry (P6-style ids), `execute(id, params)` with panic guard
 - [x] APP-03 Fuzz: every command with empty/garbage params; random command sequences vs invariants
@@ -121,6 +125,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 ## P8 — API & UI
 - [x] API-01 axum REST: GET /v1/commands, POST /v1/commands/{id}, error→HTTP status mapping
 - [x] API-02 SSE /v1/events fed by the workspace event hook
+- [x] API-04 Local API listens on 127.0.0.1 and ::1 (`localhost` no longer waits 2 s per request)
 - [x] API-03 Local API needs a bearer token (`PRSWT_API_TOKEN` or a printed one); `/v1/health` stays open
 - [x] UI-01 egui/eframe app shell (ADR-0008), theme tokens, control channel
 - [x] UI-02 Painted Gantt (bars, links, critical highlighting, baseline bars)
@@ -134,6 +139,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] CLI-01 `prswt-cli`: info, schedule, simulate, run --cmd, commands, mcp
 - [x] FMT-01 P6 XER import/export (core tables: PROJECT, CALENDAR, PROJWBS, TASK, TASKPRED, RSRC, TASKRSRC)
 - [x] FMT-02 MS Project MSPDI XML import/export
+- [x] FMT-05 Activity codes survive PRSWT's own MSPDI round trip (code in WBS)
 - [x] FMT-04 Real files: XER without plan_start_date / with seconds / blank proj_id, dated RSRCRATE prices and assignment actuals, MSPDI with OutlineLevel only (`docs/real-data-test-report.md`)
 - [x] FMT-03 MSPDI without loss: PRSWT-only values in the `PRSWT` custom field (Text1), percent lags, links to summary tasks expanded where exact, Stop/Resume
 - [x] DOC-01 ROADMAP.md, docs/architecture.md, target-app-parity.md, gaps.md, parity-checklist (generated)
@@ -156,6 +162,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] DSK-06 Dialogs for every command (calendar date pickers, code pick lists via `project.lookups`); coverage test over `commands.list`
 - [x] DSK-07 Visual polish: P6-style Gantt with date axis and table, start screen, readable dates and money, app style, icon; design B (modern workspace: navigation, inspector, Ctrl+K palette, Inter, light/dark)
 - [x] DSK-08 Release builds: Windows, Linux and macOS (Apple Silicon, Intel) packages from `desktop-release` on GitHub
+- [x] DSK-12 Views page through all activity rows (up to 50,000), not just the first 1,000
 - [x] DSK-09 Activity table: sort by any column, filters, column choice, CSV export, Print / PDF (browser page); reports as tables; Cancel for long commands
 - [x] DSK-10 Network (PERT) diagram view
 - [x] DSK-11 Gantt baseline bars and "Compare with" another branch or project

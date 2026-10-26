@@ -1,6 +1,6 @@
 # System test report
 
-> Run: 2026-10-26 07:10 · 64/64 checks passed
+> Run: 2026-10-26 21:35 · 64/64 checks passed
 
 | Check | Result | Detail |
 |---|---|---|
@@ -16,10 +16,10 @@
 | S04 same seed in a new process gives identical P-values | ✅ |  |
 | S04 a different seed gives different samples | ✅ |  |
 | S05 XER export writes a file | ✅ |  |
-| S05 XER import in a fresh process | ✅ | {'activities': 14, 'name': 'Bridge Rehabilitation', 'project': '01a1762f-b2c6-7259-8257-0be1f1803cfc', 'relationships': 14} |
+| S05 XER import in a fresh process | ✅ | {'activities': 14, 'name': 'Bridge Rehabilitation', 'project': '01a17946-f6d5-7161-b9dc-def5c477efac', 'relationships': 14} |
 | S05 XER round trip keeps the finish | ✅ | 2027-07-14T17:00 |
 | S05 MSPDI export writes a file | ✅ |  |
-| S05 MSPDI import in a fresh process | ✅ | {'activities': 14, 'name': 'Bridge Rehabilitation', 'project': '01a1762f-b2e8-71db-b79c-9191d71ad3d6', 'relationships': 14} |
+| S05 MSPDI import in a fresh process | ✅ | {'activities': 14, 'name': 'Bridge Rehabilitation', 'project': '01a17946-f6f7-7629-a67c-2eb3cb204b36', 'relationships': 14} |
 | S05 MSPDI round trip keeps the finish | ✅ | 2027-07-14T17:00 |
 | S06 MCP initialize | ✅ |  |
 | S06 MCP lists 41 tools | ✅ | 41 |
@@ -34,18 +34,18 @@
 | S07 malformed messages get JSON-RPC errors | ✅ |  |
 | S07 oversized message rejected | ✅ |  |
 | S07 server still alive afterwards | ✅ |  |
-| S08 MCP --db session writes | ✅ | {'fork_version': 1, 'id': '01a1762f-b3bc-7279-a6c6-1d904d7e0139', 'sandbox': 'sys-1792984200'} |
+| S08 MCP --db session writes | ✅ | {'fork_version': 1, 'id': '01a17946-f7e3-7408-ab34-dd60372b9873', 'sandbox': 'sys-1793036056'} |
 | S08 a new process sees stored projects | ✅ |  |
 | S08 sandboxes survive a restart | ✅ |  |
 | S08 first writer succeeds | ✅ | {'applied': True, 'branch_activities_added': [], 'delta': {'driving_path_after': ['S10', 'S20', 'M10', 'M30', 'M50', 'U1 |
-| S08 stale second writer is rejected | ✅ | {'error': {'code': 'VERSION_CONFLICT', 'message': 'branch race-1792984200 diverged from the database at version 1; reload first'}} |
+| S08 stale second writer is rejected | ✅ | {'error': {'code': 'VERSION_CONFLICT', 'message': 'branch race-1793036056 diverged from the database at version 1; reload first'}} |
 | S09 HTTP API starts | ✅ |  |
 | S09 no token → 401 | ✅ |  |
 | S09 GET /v1/commands | ✅ |  |
 | S09 POST schedule.run | ✅ |  |
 | S09 agent header → 403 | ✅ |  |
 | S09 bad input → 422 | ✅ |  |
-| S09 SSE delivers the change event | ✅ | [{'author': {'name': 'http', 'type': 'human'}, 'branch': '01a1762f-b5c3-723f-8141-e1f3ed077c40', 'changes': 1, 'project': '01a1762f-b5c0-73ab-9a9b-894 |
+| S09 SSE delivers the change event | ✅ | [{'author': {'name': 'http', 'type': 'human'}, 'branch': '01a17946-fa06-75f1-a929-e8d57d0d1418', 'changes': 1, 'project': '01a17946-fa03-758a-a735-626 |
 | S10 desktop app starts its control channel | ✅ |  |
 | S10 MCP --connect reads the app's project | ✅ |  |
 | S10 remote agent still cannot write live | ✅ |  |
