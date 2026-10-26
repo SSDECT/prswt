@@ -7,7 +7,7 @@
 //! * `GET  /v1/health`                 — liveness
 //!
 //! Like MCP and the CLI it is a thin adapter over [`Workspace::execute`].
-//! It binds to 127.0.0.1 only. With [`ApiState::token`] set (the CLI always
+//! It binds to the loopback addresses only (127.0.0.1 and ::1). With [`ApiState::token`] set (the CLI always
 //! sets one) every route but `/v1/health` needs `Authorization: Bearer
 //! <token>`, so other local programs and web pages cannot drive the engine.
 //! Callers sending `X-PRSWT-Agent: <name>` act as agents and are subject to
@@ -131,10 +131,26 @@ pub fn new_token() -> Result<String, EngineError> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Serves on `127.0.0.1:port` until the process ends.
+/// Serves on `127.0.0.1:port`, and on `[::1]:port` when the machine has an
+/// IPv6 loopback, until the process ends. Both matter: `localhost` resolves
+/// to `::1` first, and a client that finds nothing there waits about two
+/// seconds per request before it falls back to IPv4 (seen on Windows).
 pub async fn serve(state: ApiState, port: u16) -> std::io::Result<()> {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
-    axum::serve(listener, router(state)).await
+    use std::future::IntoFuture;
+    let v4 = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
+    let port = v4.local_addr()?.port();
+    let app = router(state);
+    match tokio::net::TcpListener::bind(("::1", port)).await {
+        Ok(v6) => {
+            tokio::try_join!(
+                axum::serve(v4, app.clone()).into_future(),
+                axum::serve(v6, app).into_future()
+            )?;
+            Ok(())
+        }
+        // No IPv6 loopback (or the port is taken there): IPv4 only.
+        Err(_) => axum::serve(v4, app).await,
+    }
 }
 
 async fn list_commands() -> Json<Value> {

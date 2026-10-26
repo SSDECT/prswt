@@ -1,4 +1,4 @@
-//! API tests through the router (no sockets).
+//! API tests through the router (no sockets), plus one for the listeners.
 
 use std::sync::{Arc, Mutex};
 
@@ -160,4 +160,30 @@ async fn call(
     let code = resp.status().as_u16();
     let bytes = to_bytes(resp.into_body(), 1 << 22).await.unwrap();
     (code, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+/// `localhost` resolves to `::1` first; without a listener there a client
+/// waits seconds per request (found by the scenario run).
+#[tokio::test]
+async fn api_01_serves_on_both_loopback_addresses() {
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let ipv6 = std::net::TcpListener::bind(("::1", 0)).is_ok();
+    tokio::spawn(serve(state(), port));
+    let reach = |host: &'static str| async move {
+        for _ in 0..100 {
+            if tokio::net::TcpStream::connect((host, port)).await.is_ok() {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        false
+    };
+    assert!(reach("127.0.0.1").await);
+    if ipv6 {
+        assert!(reach("::1").await, "IPv6 loopback served too");
+    }
 }
