@@ -65,6 +65,30 @@ fn ui_05_what_if_flow_through_ui_actions() {
 /// Gap 15: the Gantt draws another branch over the live plan, and the
 /// comparison stops by itself when that branch goes away.
 #[test]
+fn dsk_09_views_load_every_row_past_one_page() {
+    // schedule.activities returns at most 1000 rows per call; the table and
+    // Gantt page through all of them (found by the scenario run).
+    let mut app = app();
+    app.exec(
+        "project.create",
+        json!({ "name": "Big", "start": "2027-01-04" }),
+    )
+    .unwrap();
+    app.project = Some("Big".into());
+    for i in 0..1_200 {
+        app.exec(
+            "activity.add",
+            json!({ "code": format!("A{i:04}"), "duration": "1d" }),
+        )
+        .unwrap();
+    }
+    app.cache = Cache::default();
+    let rows = app.rows();
+    assert_eq!(rows.len(), 1_200);
+    assert!(rows.iter().any(|r| r["code"] == "A1199"));
+}
+
+#[test]
 fn dsk_11_gantt_compares_with_a_branch() {
     let mut app = app();
     let ctx = egui::Context::default();

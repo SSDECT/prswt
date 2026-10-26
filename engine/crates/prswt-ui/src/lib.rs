@@ -34,6 +34,10 @@ pub use theme::{SEMIBOLD, Tokens, apply_style, semibold};
 const DAY_MINUTES: f32 = 1440.0;
 /// Height of one Gantt row in points.
 const ROW_H: f32 = 28.0;
+/// Rows asked for per `schedule.activities` call (the command's own cap).
+const ROW_PAGE: usize = 1_000;
+/// Most activity rows the views load; bigger plans show the first ones.
+const MAX_ROWS: usize = 50_000;
 /// Gantt table columns: (title, width in points, alignment). The activity
 /// column shows the code in small type before the name.
 const GANTT_COLS: [(&str, f32, Align2); 5] = [
@@ -1265,12 +1269,38 @@ impl PrswtApp {
     }
 
     fn rows(&mut self) -> Vec<Value> {
-        let v = self.cached(
-            |c| &mut c.activities,
-            "schedule.activities",
-            json!({ "limit": 1000, "links": true }),
-        );
-        v["items"].as_array().cloned().unwrap_or_default()
+        if self.cache.activities.is_none() {
+            let params = self.with_branch(json!({ "links": true }));
+            let v = self.all_activities(&params).unwrap_or(Value::Null);
+            self.cache.activities = Some(v);
+        }
+        self.cache
+            .activities
+            .as_ref()
+            .and_then(|v| v["items"].as_array().cloned())
+            .unwrap_or_default()
+    }
+
+    /// Every `schedule.activities` row, page by page (the command returns
+    /// at most 1000 per call), up to [`MAX_ROWS`]: `{ total, items }`.
+    fn all_activities(&mut self, params: &Value) -> Option<Value> {
+        let mut items: Vec<Value> = Vec::new();
+        loop {
+            let mut p = params.clone();
+            p["limit"] = json!(ROW_PAGE);
+            p["offset"] = json!(items.len());
+            let v = self.exec("schedule.activities", p)?;
+            let page = v["items"].as_array().cloned().unwrap_or_default();
+            let total = v["total"]
+                .as_u64()
+                .and_then(|t| usize::try_from(t).ok())
+                .unwrap_or(0);
+            let empty = page.is_empty();
+            items.extend(page);
+            if empty || items.len() >= total.min(MAX_ROWS) {
+                return Some(json!({ "total": total, "items": items }));
+            }
+        }
     }
 
     /// Rows of the plan being compared with (cached like the others).
@@ -1280,10 +1310,7 @@ impl PrswtApp {
         };
         if self.cache.compare.is_none() {
             let v = self
-                .exec(
-                    "schedule.activities",
-                    json!({ "project": project, "branch": branch, "limit": 1000 }),
-                )
+                .all_activities(&json!({ "project": project, "branch": branch }))
                 .unwrap_or(Value::Null);
             if v.is_null() {
                 // The branch or project went away: stop comparing.
