@@ -4,7 +4,7 @@
 //! prswt-cli mcp      [--sample NAME] [--db] [--connect PORT] [--allow-agent-commit]
 //! prswt-cli run      [--sample NAME] [--db] [--as human|agent] --cmd 'id={json}' [--cmd …]
 //! prswt-cli serve    --control PORT [--sample NAME] [--db]
-//! prswt-cli api      --control PORT [--sample NAME]   (HTTP on 127.0.0.1:PORT)
+//! prswt-cli api      --control PORT [--sample NAME]   (HTTP on 127.0.0.1:PORT; bearer token from PRSWT_API_TOKEN or printed)
 //! prswt-cli commands [SEARCH]
 //! prswt-cli info     --db
 //! prswt-cli import-xer FILE [--db]
@@ -310,7 +310,17 @@ fn api(flags: &Flags) -> Result<(), EngineError> {
         .control
         .ok_or_else(|| EngineError::validation("api needs --control PORT"))?;
     let (ws, _store) = workspace(flags)?;
-    let state = prswt_api::ApiState::new(Arc::new(Mutex::new(ws)));
+    let mut state = prswt_api::ApiState::new(Arc::new(Mutex::new(ws)));
+    // Every caller needs the token: from PRSWT_API_TOKEN, or a fresh one.
+    let token = match std::env::var("PRSWT_API_TOKEN") {
+        Ok(t) if !t.trim().is_empty() => t.trim().to_owned(),
+        _ => {
+            let t = prswt_api::new_token()?;
+            eprintln!("API token (send as `Authorization: Bearer <token>`): {t}");
+            t
+        }
+    };
+    state.token = Some(token);
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

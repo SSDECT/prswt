@@ -15,7 +15,7 @@ description: >-
 ## How to drive it
 1. **MCP (preferred):** `prswt-cli mcp --sample bridge`, `--db` for persisted projects, or `--connect PORT` to the desktop app started with `prswt --control PORT` (`crates/prswt-cli/src/main.rs`, `crates/prswt-mcp/src/lib.rs`). In this repo `.mcp.json` registers `prswt` and `prswt-db`.
 2. **CLI:** `prswt-cli run --sample bridge --cmd 'schedule.run={}' --cmd 'simulation.run={"iterations":3000}'`; `prswt-cli import-xer FILE`, `export-xer FILE`.
-3. **HTTP:** `POST /v1/commands/{id}` with JSON params, `GET /v1/events` (SSE) (`crates/prswt-api/src/lib.rs`).
+3. **HTTP:** `POST /v1/commands/{id}` with JSON params, `GET /v1/events` (SSE) (`crates/prswt-api/src/lib.rs`). Send `Authorization: Bearer <token>`; `prswt-cli api` reads it from `PRSWT_API_TOKEN` or prints a fresh one.
 
 All routes call the same 50-command catalog (`crates/prswt-app/src/cmds/mod.rs`); `list_commands` / `prswt://commands` gives ids and parameter docs.
 

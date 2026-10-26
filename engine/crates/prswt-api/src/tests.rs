@@ -97,6 +97,42 @@ async fn api_02_writes_are_broadcast_as_events() {
     assert_eq!(events[1]["version"], 2);
 }
 
+#[tokio::test]
+async fn api_03_token_guards_every_route_but_health() {
+    let mut state = state();
+    state.token = Some("s3cret".into());
+    let app = router(state);
+    let send = |uri: &str, auth: Option<&str>| {
+        let mut req = Request::builder().method("GET").uri(uri);
+        if let Some(a) = auth {
+            req = req.header("authorization", a);
+        }
+        app.clone().oneshot(req.body(Body::empty()).unwrap())
+    };
+    let code = |r: axum::response::Response| r.status().as_u16();
+    assert_eq!(code(send("/v1/health", None).await.unwrap()), 200);
+    assert_eq!(code(send("/v1/commands", None).await.unwrap()), 401);
+    assert_eq!(
+        code(send("/v1/commands", Some("Bearer nope")).await.unwrap()),
+        401
+    );
+    assert_eq!(
+        code(send("/v1/commands", Some("s3cret")).await.unwrap()),
+        401,
+        "scheme required"
+    );
+    assert_eq!(
+        code(send("/v1/commands", Some("Bearer s3cret")).await.unwrap()),
+        200
+    );
+    assert!(
+        same_secret(b"abc", b"abc") && !same_secret(b"abc", b"abd") && !same_secret(b"ab", b"abc")
+    );
+    let t = new_token().unwrap();
+    assert_eq!(t.len(), 32);
+    assert_ne!(t, new_token().unwrap());
+}
+
 fn state() -> ApiState {
     ApiState::new(Arc::new(Mutex::new(Workspace::new(Arc::new(FixedClock(
         "2027-02-01T08:00".parse().unwrap(),

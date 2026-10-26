@@ -7,16 +7,19 @@
 //! * `GET  /v1/health`                 — liveness
 //!
 //! Like MCP and the CLI it is a thin adapter over [`Workspace::execute`].
-//! It binds to 127.0.0.1 only and has no authentication yet (see
-//! `docs/gaps.md`). Callers sending `X-PRSWT-Agent: <name>` act as agents
-//! and are subject to the agent policy; others act as humans.
+//! It binds to 127.0.0.1 only. With [`ApiState::token`] set (the CLI always
+//! sets one) every route but `/v1/health` needs `Authorization: Bearer
+//! <token>`, so other local programs and web pages cannot drive the engine.
+//! Callers sending `X-PRSWT-Agent: <name>` act as agents and are subject to
+//! the agent policy; others act as humans.
 
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -47,6 +50,9 @@ pub struct ApiState {
     /// Trust the `X-PRSWT-Agent` header when no authenticated identity is
     /// attached (local development only; the public server sets `false`).
     pub header_identity: bool,
+    /// Shared secret every request must present as a bearer token (local
+    /// API); `None` leaves authentication to an outer layer (the server).
+    pub token: Option<String>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -77,6 +83,7 @@ impl ApiState {
             events: tx,
             after_write: None,
             header_identity: true,
+            token: None,
         }
     }
 }
@@ -84,11 +91,44 @@ impl ApiState {
 /// The API routes.
 pub fn router(state: ApiState) -> Router {
     Router::new()
-        .route("/v1/health", get(|| async { Json(json!({ "ok": true })) }))
         .route("/v1/commands", get(list_commands))
         .route("/v1/commands/{id}", post(run_command))
         .route("/v1/events", get(events))
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
+        .route("/v1/health", get(|| async { Json(json!({ "ok": true })) }))
         .with_state(state)
+}
+
+/// Refuses requests without the bearer token when one is configured.
+async fn require_token(State(state): State<ApiState>, req: Request, next: Next) -> Response {
+    let Some(expected) = state.token.as_deref() else {
+        return next.run(req).await;
+    };
+    let given = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or_default();
+    if same_secret(given.as_bytes(), expected.as_bytes()) {
+        next.run(req).await
+    } else {
+        let err = EngineError::new(ErrorCode::Forbidden, "missing or wrong API token");
+        (StatusCode::UNAUTHORIZED, Json(json!({ "error": err }))).into_response()
+    }
+}
+
+/// Compares secrets in time independent of where they differ.
+fn same_secret(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// A fresh random token (128 bits from the OS, hex).
+pub fn new_token() -> Result<String, EngineError> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)
+        .map_err(|e| EngineError::new(ErrorCode::Internal, format!("no OS randomness: {e}")))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Serves on `127.0.0.1:port` until the process ends.
