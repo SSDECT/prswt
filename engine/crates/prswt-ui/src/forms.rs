@@ -1146,44 +1146,157 @@ fn unit_box(ui: &mut Ui, salt: &str, unit: &mut &'static str) {
         });
 }
 
-/// Draws a JSON result as a readable, collapsible tree.
+/// Shows a command result as a formatted report: plain values as a
+/// two-column sheet, lists of records as tables with headers, nested parts
+/// as titled sections (gap: reports were an expandable JSON tree).
 pub(crate) fn result_tree(ui: &mut Ui, v: &Value) {
-    egui::ScrollArea::vertical()
-        .max_height(480.0)
+    egui::ScrollArea::both()
+        .max_height(520.0)
         .auto_shrink([false, true])
-        .show(ui, |ui| node(ui, "result", v, 0));
+        .show(ui, |ui| section(ui, v, 0));
 }
 
-fn node(ui: &mut Ui, key: &str, v: &Value, depth: usize) {
-    let label = key.replace('_', " ");
+/// Longest list shown as rows (the rest is summarised).
+const REPORT_ROWS: usize = 500;
+
+fn section(ui: &mut Ui, v: &Value, depth: usize) {
     match v {
-        Value::Object(m) if depth < 8 => {
-            egui::CollapsingHeader::new(label)
-                .id_salt((key, depth, ui.next_auto_id()))
-                .default_open(depth < 2)
-                .show(ui, |ui| {
-                    for (k, x) in m {
-                        node(ui, k, x, depth + 1);
-                    }
-                });
+        Value::Object(m) => {
+            let plain: Vec<(&String, &Value)> = m.iter().filter(|(_, x)| is_plain(x)).collect();
+            if !plain.is_empty() {
+                egui::Grid::new(ui.next_auto_id())
+                    .num_columns(2)
+                    .striped(true)
+                    .spacing([24.0, 4.0])
+                    .show(ui, |ui| {
+                        for (k, x) in plain {
+                            ui.label(egui::RichText::new(title(k)).weak());
+                            ui.label(cell(x));
+                            ui.end_row();
+                        }
+                    });
+            }
+            for (k, x) in m.iter().filter(|(_, x)| !is_plain(x)) {
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new(title(k)).strong());
+                if depth < 6 {
+                    section(ui, x, depth + 1);
+                } else {
+                    ui.label(cell(x));
+                }
+            }
         }
-        Value::Array(a) if depth < 8 => {
-            egui::CollapsingHeader::new(format!("{label} ({})", a.len()))
-                .id_salt((key, depth, ui.next_auto_id()))
-                .default_open(depth < 2 && a.len() <= 20)
-                .show(ui, |ui| {
-                    for (i, x) in a.iter().take(500).enumerate() {
-                        node(ui, &(i + 1).to_string(), x, depth + 1);
-                    }
-                });
+        Value::Array(rows) if rows.iter().all(Value::is_object) && !rows.is_empty() => {
+            table(ui, rows);
         }
-        Value::String(s) => {
-            ui.label(format!("{label}: {s}"));
+        Value::Array(rows) if rows.is_empty() => {
+            ui.label(egui::RichText::new("none").weak());
         }
         other => {
-            ui.label(format!("{label}: {other}"));
+            ui.label(cell(other));
         }
     }
+}
+
+/// Records as a striped table; columns are the keys in first-seen order.
+fn table(ui: &mut Ui, rows: &[Value]) {
+    let mut cols: Vec<&str> = Vec::new();
+    for r in rows.iter().take(50) {
+        if let Some(m) = r.as_object() {
+            for k in m.keys() {
+                if !cols.contains(&k.as_str()) {
+                    cols.push(k);
+                }
+            }
+        }
+    }
+    egui::Grid::new(ui.next_auto_id())
+        .num_columns(cols.len())
+        .striped(true)
+        .spacing([16.0, 3.0])
+        .show(ui, |ui| {
+            for c in &cols {
+                ui.label(egui::RichText::new(title(c)).strong());
+            }
+            ui.end_row();
+            for r in rows.iter().take(REPORT_ROWS) {
+                for c in &cols {
+                    let x = &r[*c];
+                    if x.is_number() {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(cell(x));
+                        });
+                    } else {
+                        ui.label(cell(x));
+                    }
+                }
+                ui.end_row();
+            }
+        });
+    if rows.len() > REPORT_ROWS {
+        ui.label(format!("… and {} more rows", rows.len() - REPORT_ROWS));
+    }
+}
+
+/// Values that fit in one cell: scalars and short lists of scalars.
+fn is_plain(v: &Value) -> bool {
+    match v {
+        Value::Object(_) => false,
+        Value::Array(a) => a.len() <= 12 && a.iter().all(|x| !x.is_object() && !x.is_array()),
+        _ => true,
+    }
+}
+
+/// One cell's text: dates readable, lists joined, nested parts compacted.
+fn cell(v: &Value) -> String {
+    match v {
+        Value::Null => "—".into(),
+        Value::Bool(b) => if *b { "yes" } else { "no" }.into(),
+        Value::Number(n) => n.as_f64().map_or_else(
+            || n.to_string(),
+            |f| {
+                if f.fract() == 0.0 && f.abs() < 1e15 {
+                    format!("{f:.0}")
+                } else {
+                    format!("{f:.2}")
+                }
+            },
+        ),
+        Value::String(s) => readable_date(s).unwrap_or_else(|| s.clone()),
+        Value::Array(a) => a.iter().map(cell).collect::<Vec<_>>().join(" → "),
+        Value::Object(m) => m
+            .iter()
+            .map(|(k, x)| format!("{}: {}", title(k), cell(x)))
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}
+
+/// `2027-03-01T08:00` → `01 Mar 2027 08:00` (other text unchanged).
+fn readable_date(s: &str) -> Option<String> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let b = s.as_bytes();
+    if s.len() < 10 || b.get(4) != Some(&b'-') || b.get(7) != Some(&b'-') {
+        return None;
+    }
+    let (y, m, d) = (s.get(0..4)?, s.get(5..7)?, s.get(8..10)?);
+    let month = MONTHS.get(m.parse::<usize>().ok()?.checked_sub(1)?)?;
+    let time = s.get(11..16).filter(|_| s.len() >= 16).unwrap_or("");
+    d.parse::<u32>().ok()?;
+    y.parse::<u32>().ok()?;
+    Some(format!("{d} {month} {y} {time}").trim_end().to_owned())
+}
+
+/// `total_float_days` → `Total float days`.
+fn title(key: &str) -> String {
+    let mut t = key.replace('_', " ");
+    if let Some(first) = t.get(0..1) {
+        let up = first.to_uppercase();
+        t.replace_range(0..1, &up);
+    }
+    t
 }
 
 #[cfg(test)]

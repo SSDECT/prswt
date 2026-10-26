@@ -208,6 +208,33 @@ impl Window {
                     }
                 }
             }
+            FileRequest::SaveText {
+                title,
+                file_name,
+                extension,
+                text,
+                open_after,
+            } => {
+                let Some(path) = dialog(frame)
+                    .set_title(&title)
+                    .add_filter(extension.to_uppercase(), &[extension.as_str()])
+                    .set_file_name(safe_file_name(&file_name))
+                    .save_file()
+                else {
+                    return;
+                };
+                let path = files::with_extension(path, &extension);
+                self.app.status = match files::write_atomic(&path, &text) {
+                    Ok(()) => {
+                        if open_after && open::that_detached(&path).is_err() {
+                            format!("Saved {} (open it to print)", path.display())
+                        } else {
+                            format!("Saved {}", path.display())
+                        }
+                    }
+                    Err(e) => format!("Not saved: {e}"),
+                };
+            }
             FileRequest::Quit => {
                 self.pending = Some(Pending::Quit);
                 // With nothing unsaved, `confirm` lets the close through at once.

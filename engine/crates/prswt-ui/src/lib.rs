@@ -14,6 +14,8 @@
 mod chrome;
 mod cloud;
 mod forms;
+mod network;
+mod table;
 mod theme;
 
 use std::collections::HashSet;
@@ -55,6 +57,8 @@ pub enum Tab {
     Gantt,
     /// Editable activity table.
     Activities,
+    /// Network (PERT) diagram: boxes by logic depth, linked by arrows.
+    Network,
     /// Resource usage, cost and earned value.
     Resources,
     /// Risk register with one-click what-ifs.
@@ -66,10 +70,11 @@ pub enum Tab {
 }
 
 impl Tab {
-    /// All views in navigation order (Ctrl+1 … Ctrl+6).
-    pub const ALL: [Tab; 6] = [
+    /// All views in navigation order (Ctrl+1 … Ctrl+7).
+    pub const ALL: [Tab; 7] = [
         Tab::Gantt,
         Tab::Activities,
+        Tab::Network,
         Tab::Resources,
         Tab::Risks,
         Tab::Simulation,
@@ -81,6 +86,7 @@ impl Tab {
         match self {
             Tab::Gantt => "Schedule",
             Tab::Activities => "Activities",
+            Tab::Network => "Network",
             Tab::Resources => "Resources & cost",
             Tab::Risks => "Risks",
             Tab::Simulation => "Risk analysis",
@@ -94,10 +100,11 @@ impl Tab {
         match self {
             Tab::Gantt => Key::Num1,
             Tab::Activities => Key::Num2,
-            Tab::Resources => Key::Num3,
-            Tab::Risks => Key::Num4,
-            Tab::Simulation => Key::Num5,
-            Tab::Sandboxes => Key::Num6,
+            Tab::Network => Key::Num3,
+            Tab::Resources => Key::Num4,
+            Tab::Risks => Key::Num5,
+            Tab::Simulation => Key::Num6,
+            Tab::Sandboxes => Key::Num7,
         }
     }
 }
@@ -174,6 +181,21 @@ pub enum FileRequest {
     Close,
     /// File ▸ Quit.
     Quit,
+    /// Save text the UI produced (CSV, a printable page) under a name the
+    /// person picks; `open_after` opens it with the system viewer (the
+    /// browser prints a page or saves it as PDF).
+    SaveText {
+        /// File-dialog title.
+        title: String,
+        /// Suggested file name, extension included.
+        file_name: String,
+        /// Extension without the dot (dialog filter).
+        extension: String,
+        /// The contents.
+        text: String,
+        /// Open the file once written.
+        open_after: bool,
+    },
 }
 
 /// Calendar presets of `project.create`: (id, label shown in the dialog).
@@ -230,6 +252,9 @@ pub trait Engine {
     fn spawn(&mut self, _command: &str, _params: &Value) -> Option<Job> {
         None
     }
+
+    /// Asks the background command to stop (no-op when unsupported).
+    fn cancel(&mut self) {}
 }
 
 /// A command running in the background; poll it once per frame.
@@ -271,6 +296,8 @@ pub struct LocalEngine {
     pub ws: Arc<Mutex<Workspace>>,
     /// Identity the UI acts as.
     pub ctx: Ctx,
+    /// Stop switch of the workspace, taken while it was unlocked.
+    pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 #[cfg(feature = "local")]
@@ -310,6 +337,12 @@ impl Engine for LocalEngine {
             .ok()?;
         Some(Job { rx })
     }
+
+    fn cancel(&mut self) {
+        if let Some(c) = &self.cancel {
+            c.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 /// Engine error → the UI's backend-independent failure.
@@ -337,6 +370,8 @@ struct Cache {
     lookups: Option<Value>,
     /// `schedule.activity` of the inspected activity: (code, result).
     activity: Option<(String, Value)>,
+    /// `schedule.activities` of the plan the Gantt is compared with.
+    compare: Option<Value>,
 }
 
 /// The application state behind the window.
@@ -391,6 +426,12 @@ pub struct PrswtApp {
     pub cloud: CloudView,
     cloud_requests: Vec<CloudRequest>,
     dialogs: cloud::CloudDialogs,
+    /// Columns, sort and filters of the activity table.
+    table: table::TableView,
+    /// Draw baseline bars under the Gantt bars (when a baseline exists).
+    show_baseline: bool,
+    /// Gap 15: another plan drawn over the Gantt, `(project, branch)`.
+    compare: Option<(String, String)>,
 }
 
 impl std::fmt::Debug for PrswtApp {
@@ -406,9 +447,11 @@ impl PrswtApp {
     /// Desktop UI over a shared workspace (the control channel may share it too).
     #[cfg(feature = "local")]
     pub fn new(ws: Arc<Mutex<Workspace>>) -> Self {
+        let cancel = ws.lock().ok().map(|w| w.cancel_handle());
         Self::with_engine(Box::new(LocalEngine {
             ws,
             ctx: Ctx::human("desktop"),
+            cancel,
         }))
     }
 
@@ -443,6 +486,9 @@ impl PrswtApp {
             cloud: CloudView::default(),
             cloud_requests: Vec::new(),
             dialogs: cloud::CloudDialogs::default(),
+            table: table::TableView::default(),
+            show_baseline: true,
+            compare: None,
         }
     }
 
@@ -758,6 +804,14 @@ impl PrswtApp {
                             ui.set_min_size(ui.available_size());
                             match tab {
                                 Tab::Activities => self.activities(ui),
+                                Tab::Network => {
+                                    let rows = self.rows();
+                                    let sel = self.edit_activity.clone();
+                                    if let Some(code) = network::draw(ui, &tok, &rows, &sel) {
+                                        self.edit_activity =
+                                            if code == sel { String::new() } else { code };
+                                    }
+                                }
                                 other => {
                                     egui::ScrollArea::vertical()
                                         .auto_shrink([false, false])
@@ -798,14 +852,26 @@ impl PrswtApp {
             "resource.level" => "Levelling resources",
             other => other,
         };
+        let mut stop = false;
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.centered_and_justified(|ui| {
-                ui.horizontal_centered(|ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(ui.available_height() * 0.4);
+                ui.horizontal(|ui| {
                     ui.spinner();
                     ui.heading(format!("{what}… {secs} s"));
                 });
+                ui.add_space(8.0);
+                stop = ui
+                    .button("Cancel")
+                    .on_hover_text("Stop and keep the project as it was")
+                    .clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Escape));
             });
         });
+        if stop {
+            self.engine.cancel();
+            self.status = format!("{what}: stopping…");
+        }
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(100));
         true
@@ -1202,9 +1268,78 @@ impl PrswtApp {
         let v = self.cached(
             |c| &mut c.activities,
             "schedule.activities",
-            json!({ "limit": 1000 }),
+            json!({ "limit": 1000, "links": true }),
         );
         v["items"].as_array().cloned().unwrap_or_default()
+    }
+
+    /// Rows of the plan being compared with (cached like the others).
+    fn compare_rows(&mut self) -> Vec<Value> {
+        let Some((project, branch)) = self.compare.clone() else {
+            return Vec::new();
+        };
+        if self.cache.compare.is_none() {
+            let v = self
+                .exec(
+                    "schedule.activities",
+                    json!({ "project": project, "branch": branch, "limit": 1000 }),
+                )
+                .unwrap_or(Value::Null);
+            if v.is_null() {
+                // The branch or project went away: stop comparing.
+                self.compare = None;
+            }
+            self.cache.compare = Some(v);
+        }
+        self.cache
+            .compare
+            .as_ref()
+            .and_then(|v| v["items"].as_array().cloned())
+            .unwrap_or_default()
+    }
+
+    /// The "Compare with" menu: other branches of this project, other projects.
+    fn compare_menu(&mut self, ui: &mut Ui) {
+        let label = match &self.compare {
+            Some((p, b)) if Some(p) == self.project.as_ref() => format!("Compare: {b}"),
+            Some((p, _)) => format!("Compare: {p}"),
+            None => "Compare…".to_owned(),
+        };
+        ui.menu_button(label, |ui| {
+            if ui.selectable_label(self.compare.is_none(), "Off").clicked() {
+                self.compare = None;
+                self.cache.compare = None;
+            }
+            let branches = self.cached(|c| &mut c.branches, "sandbox.list", json!({}));
+            let here = self.project.clone().unwrap_or_default();
+            let mut choices: Vec<(String, String, String)> = branches["branches"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|b| b["status"] == "open")
+                .filter_map(|b| b["name"].as_str().map(str::to_owned))
+                .filter(|n| *n != self.branch)
+                .map(|n| (format!("Branch {n}"), here.clone(), n))
+                .collect();
+            choices.extend(
+                self.project_names()
+                    .into_iter()
+                    .filter(|p| *p != here)
+                    .map(|p| (format!("Project {p}"), p, "live".to_owned())),
+            );
+            if choices.is_empty() {
+                ui.label(
+                    RichText::new("Make a what-if branch or open another project first").weak(),
+                );
+            }
+            for (label, project, branch) in choices {
+                let on = self.compare.as_ref() == Some(&(project.clone(), branch.clone()));
+                if ui.selectable_label(on, label).clicked() {
+                    self.compare = Some((project, branch));
+                    self.cache.compare = None;
+                }
+            }
+        });
     }
 
     /// UI-02 / DSK-07: Gantt chart in a card: a toolbar (Gantt/Table,
@@ -1214,6 +1349,23 @@ impl PrswtApp {
     /// is orange; clicking a row opens the inspector.
     fn gantt(&mut self, ui: &mut Ui) {
         let rows = self.rows();
+        let other: std::collections::HashMap<String, (Option<i64>, Option<i64>)> = self
+            .compare_rows()
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r["code"].as_str()?.to_owned(),
+                    (minutes(&r["early_start"]), minutes(&r["early_finish"])),
+                ))
+            })
+            .collect();
+        let compare_name = self.compare.as_ref().map(|(p, b)| {
+            if Some(p) == self.project.as_ref() {
+                b.clone()
+            } else {
+                p.clone()
+            }
+        });
         let summary = self.cached(|c| &mut c.summary, "schedule.run", json!({}));
         let lookups = self.lookups();
         let tok = Tokens::for_ui(ui);
@@ -1224,6 +1376,11 @@ impl PrswtApp {
                     self.tab = Tab::Activities;
                 }
                 ui.checkbox(&mut self.group_wbs, "Group by WBS");
+                if rows.iter().any(|r| r["baseline_finish"].is_string()) {
+                    ui.checkbox(&mut self.show_baseline, "Baseline")
+                        .on_hover_text("Grey bars: dates of the latest baseline");
+                }
+                self.compare_menu(ui);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Right to left: the list reads Fit, Month, Week, Day on screen.
                     let labels: Vec<&str> = ZOOMS.iter().map(|z| z.0).chain(["Fit"]).collect();
@@ -1250,12 +1407,32 @@ impl PrswtApp {
                 });
             });
             ui.add_space(6.0);
-            let lines = gantt_lines(
+            let mut lines = gantt_lines(
                 &rows,
                 &lookups,
                 self.project.as_deref().unwrap_or(""),
                 self.group_wbs,
             );
+            for l in &mut lines {
+                if let Some(&(s, f)) = other.get(&l.code) {
+                    (l.cs, l.cf) = (s, f);
+                }
+            }
+            if let Some(name) = &compare_name {
+                let mine = lines.iter().filter_map(|l| l.ef).max();
+                let theirs = other.values().filter_map(|d| d.1).max();
+                if let (Some(a), Some(b)) = (mine, theirs) {
+                    let days = (b - a) as f64 / f64::from(DAY_MINUTES);
+                    ui.label(
+                        RichText::new(format!(
+                            "Outlined bars: {name}. Its finish is {} ({:+.1} calendar days).",
+                            long_date(&iso(b)),
+                            days
+                        ))
+                        .color(tok.muted),
+                    );
+                }
+            }
             let starts = lines.iter().filter_map(|l| l.es);
             let ends = lines.iter().filter_map(|l| l.lf.max(l.ef));
             let early_end = lines.iter().filter_map(|l| l.ef).max();
@@ -1280,6 +1457,7 @@ impl PrswtApp {
                 self.px_per_day = (avail / fit_days).clamp(1.0, 60.0);
             }
             let ppd = self.px_per_day;
+            let show_baseline = self.show_baseline;
             let header = 40.0;
             let width = table_w + span_days * ppd + 16.0;
             let height = header + ROW_H * lines.len() as f32 + 8.0;
@@ -1375,13 +1553,36 @@ impl PrswtApp {
                             continue;
                         };
                         let colour = if l.on_path { tok.critical } else { tok.normal };
+                        let baseline = show_baseline && !l.summary && l.bs.is_some();
+                        if !l.summary
+                            && let (Some(cs), Some(cf)) = (l.cs, l.cf)
+                        {
+                            // The compared plan: an outline around where its bar would be.
+                            let bar = Rect::from_min_max(
+                                Pos2::new(x(cs), mid - 8.0),
+                                Pos2::new(x(cf).max(x(cs) + 3.0), mid + 6.0),
+                            );
+                            painter.rect_stroke(
+                                bar,
+                                6.0_f32.min(bar.width() / 2.0),
+                                Stroke::new(1.5, tok.accent),
+                                egui::StrokeKind::Outside,
+                            );
+                        }
+                        if baseline && let (Some(bs), Some(bf)) = (l.bs, l.bf) {
+                            let bar = Rect::from_min_max(
+                                Pos2::new(x(bs), mid + 7.0),
+                                Pos2::new(x(bf).max(x(bs) + 2.0), mid + 10.0),
+                            );
+                            painter.rect_filled(bar, 1.0, tok.summary.gamma_multiply(0.6));
+                        }
                         if !l.summary
                             && let Some(lf) = l.lf
                             && lf > ef
                         {
-                            // Below the bar, so it never runs through the bar's label.
+                            // Below the bar (and the baseline bar), clear of the label.
                             let s = Stroke::new(1.0, tok.float);
-                            let fy = mid + 8.0;
+                            let fy = if baseline { mid + 12.5 } else { mid + 8.0 };
                             painter.line_segment([Pos2::new(x(ef), fy), Pos2::new(x(lf), fy)], s);
                             painter.line_segment(
                                 [Pos2::new(x(lf), fy - 3.0), Pos2::new(x(lf), fy + 3.0)],
@@ -1437,13 +1638,29 @@ impl PrswtApp {
                             && row.contains(pos)
                         {
                             let tip = format!(
-                                "{}  {}\nStart {}   Finish {}\nLate finish {}   Total float {}{}",
+                                "{}  {}\nStart {}   Finish {}\nLate finish {}   Total float {}{}{}",
                                 l.code,
                                 l.name,
                                 long_date(&l.start),
                                 long_date(&l.finish),
                                 long_date(&l.late_finish),
                                 l.float,
+                                match (l.bs.is_some(), l.cs.zip(l.cf)) {
+                                    (_, Some((cs, cf))) => format!(
+                                        "\n{}: {} – {}   Finish shift {:+.1} d",
+                                        compare_name.as_deref().unwrap_or("Compared"),
+                                        day_date(&iso(cs)),
+                                        day_date(&iso(cf)),
+                                        (l.ef.unwrap_or(cf) - cf) as f64 / f64::from(DAY_MINUTES)
+                                    ),
+                                    (true, None) => format!(
+                                        "\nBaseline {} – {}   Variance {}",
+                                        short_date(&l.baseline_start),
+                                        short_date(&l.baseline_finish),
+                                        l.variance
+                                    ),
+                                    (false, None) => String::new(),
+                                },
                                 if l.on_path && !l.summary {
                                     "\nOn the longest path"
                                 } else {
@@ -1562,9 +1779,10 @@ impl PrswtApp {
         });
     }
 
-    /// UI-03 / DSK-06: activity table. Rows are selected by clicking; the
-    /// buttons open the command dialogs with the selection filled in, so
-    /// nothing is typed here.
+    /// UI-03 / DSK-06 / gap 14: activity table. Rows are selected by
+    /// clicking; the buttons open the command dialogs with the selection
+    /// filled in. Headers sort (click again to reverse); the second toolbar
+    /// filters, picks columns, exports CSV and prints.
     fn activities(&mut self, ui: &mut Ui) {
         let rows = self.rows();
         let selected = self.edit_activity.clone();
@@ -1594,60 +1812,126 @@ impl PrswtApp {
                 ui.label(RichText::new(format!("Selected: {selected}")).strong());
             }
         });
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.table.search)
+                    .hint_text("Find code or name")
+                    .desired_width(180.0),
+            );
+            egui::ComboBox::from_id_salt("table_show")
+                .selected_text(
+                    table::SHOWS
+                        .iter()
+                        .find(|s| s.0 == self.table.show)
+                        .map_or("", |s| s.1),
+                )
+                .show_ui(ui, |ui| {
+                    for (show, label) in table::SHOWS {
+                        ui.selectable_value(&mut self.table.show, show, label);
+                    }
+                });
+            ui.menu_button("Columns", |ui| {
+                for (col, label, _) in table::COLUMNS {
+                    let mut on = self.table.visible.contains(&col);
+                    let fixed = matches!(col, table::Col::Code | table::Col::Name);
+                    if ui
+                        .add_enabled(!fixed, egui::Checkbox::new(&mut on, label))
+                        .changed()
+                    {
+                        self.table.toggle(col);
+                    }
+                }
+            });
+            let shown = self.table.apply(&rows);
+            ui.label(RichText::new(format!("{} of {}", shown.len(), rows.len())).weak());
+            let name = self.project.clone().unwrap_or_else(|| "schedule".into());
+            if ui.button("Export CSV…").clicked() {
+                let text = table::csv(&self.table, &shown);
+                self.requests.push(FileRequest::SaveText {
+                    title: "Export table as CSV".into(),
+                    file_name: format!("{name} activities.csv"),
+                    extension: "csv".into(),
+                    text,
+                    open_after: false,
+                });
+            }
+            if ui
+                .button("Print / PDF…")
+                .on_hover_text("Opens a printable page in your browser; print it or save it as PDF")
+                .clicked()
+            {
+                let summary = self.cached(|c| &mut c.summary, "schedule.run", json!({}));
+                let text = table::html(&name, &summary, &self.table, &shown);
+                self.requests.push(FileRequest::SaveText {
+                    title: "Save printable schedule".into(),
+                    file_name: format!("{name} schedule.html"),
+                    extension: "html".into(),
+                    text,
+                    open_after: true,
+                });
+            }
+        });
         ui.add_space(4.0);
-        egui::ScrollArea::vertical()
+        let shown: Vec<Value> = self.table.apply(&rows).into_iter().cloned().collect();
+        let cols = self.table.visible.clone();
+        let (sort_col, desc) = self.table.sort;
+        let mut sort_by = None;
+        let critical = Tokens::for_ui(ui).critical;
+        let path_float = longest_path_float(&rows);
+        egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 egui::Grid::new("acts")
                     .striped(true)
                     .spacing([18.0, 6.0])
                     .show(ui, |ui| {
-                        for h in [
-                            "Code",
-                            "Name",
-                            "Type",
-                            "Duration",
-                            "Start",
-                            "Finish",
-                            "Total float",
-                            "",
-                        ] {
-                            ui.label(RichText::new(h).strong());
+                        for &c in &cols {
+                            let arrow = match (c == sort_col, desc) {
+                                (true, false) => " ▲",
+                                (true, true) => " ▼",
+                                _ => "",
+                            };
+                            let h = ui.add(
+                                egui::Button::new(
+                                    RichText::new(format!("{}{arrow}", table::header(c))).strong(),
+                                )
+                                .frame(false),
+                            );
+                            if h.on_hover_text("Sort").clicked() {
+                                sort_by = Some(c);
+                            }
                         }
                         ui.end_row();
-                        for r in &rows {
+                        for r in &shown {
                             let code = r["code"].as_str().unwrap_or("").to_owned();
                             let is_sel = code == selected;
-                            if ui.selectable_label(is_sel, &code).clicked() {
-                                self.edit_activity =
-                                    if is_sel { String::new() } else { code.clone() };
+                            for &c in &cols {
+                                let text = table::cell(r, c);
+                                if c == table::Col::Code {
+                                    if ui.selectable_label(is_sel, &text).clicked() {
+                                        self.edit_activity =
+                                            if is_sel { String::new() } else { code.clone() };
+                                    }
+                                } else if c == table::Col::TotalFloat
+                                    && on_longest_path(r, path_float)
+                                {
+                                    ui.label(RichText::new(text).color(critical));
+                                } else if table::numeric(c) {
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| ui.label(text),
+                                    );
+                                } else {
+                                    ui.label(text);
+                                }
                             }
-                            ui.label(r["name"].as_str().unwrap_or(""));
-                            ui.label(
-                                RichText::new(r["kind"].as_str().unwrap_or("").replace('_', " "))
-                                    .weak(),
-                            );
-                            ui.label(match &r["duration"] {
-                                Value::Object(o) => format!(
-                                    "{} / {} / {}",
-                                    o.get("o").and_then(Value::as_str).unwrap_or(""),
-                                    o.get("m").and_then(Value::as_str).unwrap_or("-"),
-                                    o.get("p").and_then(Value::as_str).unwrap_or("")
-                                ),
-                                other => duration_text(other),
-                            });
-                            ui.label(long_date(&r["early_start"]));
-                            ui.label(long_date(&r["early_finish"]));
-                            ui.label(r["total_float"].as_str().unwrap_or("–"));
-                            ui.label(if r["critical"] == true {
-                                RichText::new("critical").color(Tokens::for_ui(ui).critical)
-                            } else {
-                                RichText::new("")
-                            });
                             ui.end_row();
                         }
                     });
             });
+        if let Some(c) = sort_by {
+            self.table.sort_by(c);
+        }
     }
 
     /// Opens the first dialog for `command` with some pickers preset.
@@ -2280,6 +2564,16 @@ struct Line {
     es: Option<i64>,
     ef: Option<i64>,
     lf: Option<i64>,
+    /// Latest baseline's dates, when there is one.
+    baseline_start: Value,
+    baseline_finish: Value,
+    bs: Option<i64>,
+    bf: Option<i64>,
+    /// Finish variance against the baseline (`2d` = later).
+    variance: String,
+    /// The compared plan's early start and finish of the same code.
+    cs: Option<i64>,
+    cf: Option<i64>,
 }
 
 impl Line {
@@ -2300,6 +2594,13 @@ impl Line {
             es: minutes(&r["early_start"]),
             ef: minutes(&r["early_finish"]),
             lf: minutes(&r["late_finish"]),
+            baseline_start: r["baseline_start"].clone(),
+            baseline_finish: r["baseline_finish"].clone(),
+            bs: minutes(&r["baseline_start"]),
+            bf: minutes(&r["baseline_finish"]),
+            variance: r["finish_variance"].as_str().unwrap_or("–").to_owned(),
+            cs: None,
+            cf: None,
         }
     }
 
@@ -2408,6 +2709,14 @@ fn day_date(v: &Value) -> String {
     date_parts(v).map_or_else(
         || "–".into(),
         |(y, m, d, _)| format!("{d:02} {} {y}", month(m)),
+    )
+}
+
+/// Inverse of [`minutes`]: `YYYY-MM-DDTHH:MM` as JSON (null if out of range).
+fn iso(minutes: i64) -> Value {
+    json!(
+        chrono::DateTime::from_timestamp(minutes.saturating_mul(60), 0)
+            .map(|d| d.format("%Y-%m-%dT%H:%M").to_string())
     )
 }
 

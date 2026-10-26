@@ -62,6 +62,46 @@ fn ui_05_what_if_flow_through_ui_actions() {
     frame(&ctx, &mut app);
 }
 
+/// Gap 15: the Gantt draws another branch over the live plan, and the
+/// comparison stops by itself when that branch goes away.
+#[test]
+fn dsk_11_gantt_compares_with_a_branch() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    app.open_sample("bridge");
+    assert!(
+        app.exec("sandbox.create", json!({ "name": "slow" }))
+            .is_some()
+    );
+    assert!(
+        app.exec(
+            "activity.update",
+            json!({ "branch": "slow", "activity": "C30", "duration": "40d" })
+        )
+        .is_some()
+    );
+    let project = app.project.clone().unwrap();
+    app.compare = Some((project, "slow".into()));
+    app.tab = Tab::Gantt;
+    frame(&ctx, &mut app);
+    let other = app.compare_rows();
+    let c30 = other.iter().find(|r| r["code"] == "C30").unwrap();
+    let mine = app.rows();
+    let here = mine.iter().find(|r| r["code"] == "C30").unwrap();
+    assert_ne!(c30["early_finish"], here["early_finish"]);
+    assert!(
+        app.exec("sandbox.discard", json!({ "sandbox": "slow" }))
+            .is_some()
+    );
+    app.cache = Cache::default();
+    frame(&ctx, &mut app);
+    frame(&ctx, &mut app);
+    assert!(
+        app.compare.is_none() || app.compare_rows().is_empty(),
+        "a discarded branch is not compared"
+    );
+}
+
 #[test]
 fn dsk_02_file_round_trip_and_shortcuts_through_the_ui() {
     let mut app = app();
@@ -158,6 +198,7 @@ fn dsk_05_simulation_runs_in_the_background_while_frames_keep_drawing() {
 
 /// Commands the UI calls from its own views and menus (not via a form).
 const DIRECT: &[&str] = &[
+    "sync.reapply",
     "project.create",
     "project.list",
     "project.lookups",
@@ -201,6 +242,7 @@ fn dsk_06_every_command_has_a_ui_path() {
     let source = [
         include_str!("lib.rs"),
         include_str!("chrome.rs"),
+        include_str!("cloud.rs"),
         include_str!("../../prswt-desktop/src/main.rs"),
         include_str!("../../prswt-desktop/src/cloud.rs"),
     ]

@@ -139,7 +139,7 @@ impl PrswtApp {
                 self.project_switcher(ui, &tok);
                 ui.add_space(10.0);
                 section(ui, &tok, "PLAN");
-                for t in [Tab::Gantt, Tab::Activities, Tab::Resources] {
+                for t in [Tab::Gantt, Tab::Activities, Tab::Network, Tab::Resources] {
                     self.nav_item(ui, &tok, t);
                 }
                 ui.add_space(8.0);
@@ -464,7 +464,9 @@ impl PrswtApp {
     /// The right-hand panel for the selected activity: dates, duration
     /// range, links, why it starts when it does, risks and actions.
     pub(crate) fn inspector(&mut self, ui: &mut Ui) {
-        if !matches!(self.tab, Tab::Gantt | Tab::Activities) || self.edit_activity.is_empty() {
+        if !matches!(self.tab, Tab::Gantt | Tab::Activities | Tab::Network)
+            || self.edit_activity.is_empty()
+        {
             return;
         }
         let code = self.edit_activity.clone();
