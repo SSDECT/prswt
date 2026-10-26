@@ -172,6 +172,7 @@ pub fn activities(w: &mut Workspace, _: &Ctx, v: &Value) -> Result<Value, Engine
                             json!({
                                 "activity": s.model.nodes[edge.pred].code,
                                 "type": edge.kind,
+                                "lag": days(edge.lag, s.model.cal(i).minutes_per_day()),
                                 "driving": s.dates.edge_slack[e] == Some(0),
                             })
                         })
@@ -442,17 +443,47 @@ pub fn level(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineErr
         ..LevelOptions::default()
     };
     let r = level_resources(&rctx, &opts)?;
-    let delayed: Vec<Value> = r
+    // Only resourced work keeps a leveled start; activities pushed by logic
+    // alone follow their predecessors on the next calculation.
+    let resourced: HashSet<ActivityId> = sn.assignments.iter().map(|a| a.activity).collect();
+    let leveled: HashMap<ActivityId, Instant> = r
         .delayed
         .iter()
-        .filter_map(|(id, m)| {
-            let i = s.index_of(*id)?;
-            Some(json!({ "activity": s.model.nodes[i].code, "delay": days(m.0, s.model.cal(i).minutes_per_day()), "new_start": t(r.start[i]) }))
+        .filter(|(id, _)| resourced.contains(id))
+        .filter_map(|(id, _)| Some((*id, r.start[s.index_of(*id)?])))
+        .collect();
+    // Report the schedule the user gets once the leveled starts are kept, so
+    // milestones and logic-driven successors land where the next run puts
+    // them (the leveler's own pass only approximates those).
+    let mut acts = sn.activities.clone();
+    for a in &mut acts {
+        a.leveled_start = leveled.get(&a.id).copied();
+    }
+    let after = prswt_cpm::schedule(&prswt_cpm::ScheduleInput {
+        project: &project,
+        calendars: &sn.calendars,
+        wbs: &sn.wbs,
+        activities: &acts,
+        relationships: &sn.relationships,
+    })?;
+    let delayed: Vec<Value> = (0..s.model.nodes.len())
+        .filter_map(|i| {
+            let j = after.index_of(s.model.nodes[i].id)?;
+            let (from, to) = (s.dates.es[i], after.dates.es[j]);
+            let cal = s.model.cal(i);
+            let moved = cal.work_between(from, to).ok()?.0;
+            (to > from).then(|| {
+                json!({
+                    "activity": s.model.nodes[i].code,
+                    "delay": days(moved, cal.minutes_per_day()),
+                    "new_start": t(to),
+                })
+            })
         })
         .collect();
     let mut out = json!({
         "finish_before": t(s.project_finish()),
-        "finish_after": t(r.finish_date),
+        "finish_after": t(after.project_finish()),
         "delayed": delayed,
         "unresolved": r.unresolved.iter().filter_map(|id| s.index_of(*id).map(|i| s.model.nodes[i].code.clone())).collect::<Vec<_>>(),
     });
@@ -460,22 +491,13 @@ pub fn level(w: &mut Workspace, ctx: &Ctx, v: &Value) -> Result<Value, EngineErr
         // Leveled starts are kept apart from constraints (P6 leveled dates):
         // set on the delayed activities, removed from the rest.
         let state = &w.repo_ref(pid)?.branch(bid)?.head;
-        // Only resourced work keeps a leveled start; activities pushed by
-        // logic alone follow their predecessors on the next calculation.
-        let resourced: HashSet<ActivityId> = sn.assignments.iter().map(|a| a.activity).collect();
-        let delayed: HashMap<ActivityId, Instant> = r
-            .delayed
-            .iter()
-            .filter(|(id, _)| resourced.contains(id))
-            .filter_map(|(id, _)| Some((*id, r.start[s.index_of(*id)?])))
-            .collect();
         let cmds: Vec<Command> = state
             .activities
             .values()
-            .filter(|a| a.leveled_start != delayed.get(&a.id).copied())
+            .filter(|a| a.leveled_start != leveled.get(&a.id).copied())
             .map(|a| {
                 let mut a = a.clone();
-                a.leveled_start = delayed.get(&a.id).copied();
+                a.leveled_start = leveled.get(&a.id).copied();
                 Command::UpsertActivity {
                     activity: Box::new(a),
                 }
