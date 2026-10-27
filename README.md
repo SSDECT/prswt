@@ -9,7 +9,7 @@ A clean-room, Rust-native, MCP-first scheduling and quantitative-risk engine in 
 | [**PRSWT-windows-x64.zip**](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-windows-x64.zip) | [**PRSWT-macos-apple-silicon.dmg**](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-macos-apple-silicon.dmg) | [**PRSWT-macos-intel.dmg**](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-macos-intel.dmg) | [**PRSWT-linux-x64.tar.gz**](https://github.com/SSDECT/prswt/releases/latest/download/PRSWT-linux-x64.tar.gz) |
 | Unzip, run `prswt.exe` | Open, drag to Applications | Open, drag to Applications | Unpack, run `prswt` |
 
-No installer, no account, works offline. Start with **File ▸ Open sample**, or open the tutorial project [docs/examples/office-building.prswt](docs/examples/office-building.prswt). [User guide (RU)](docs/user-guide.md) · [all releases](https://github.com/SSDECT/prswt/releases)
+No installer, no account, works offline. Start with **File ▸ Open sample**, or open the tutorial project [docs/examples/office-building.prswt](docs/examples/office-building.prswt). [User guide](docs/user-guide.en.md) ([RU](docs/user-guide.md)) · [all releases](https://github.com/SSDECT/prswt/releases)
 
 ## Features
 - **Scheduling:** CPM with FS/SS/FF/SF, leads/lags, lag calendars, ten constraint types, must-finish-by and negative float, retained logic / progress override, LOE, milestones, WBS rollups, multiple float paths, DCMA-14, expected finish, suspend/resume, out-of-sequence report.
@@ -43,7 +43,7 @@ Claude Code picks up the project-scoped MCP servers in `.mcp.json` (`prswt`, `pr
 `tools/package-desktop.sh` builds and packages for the OS it runs on (`dist/`): a `.zip` on Windows, a `.tar.gz` with a `.desktop` entry on Linux, a `.dmg` with `PRSWT.app` on macOS. `.github/workflows/desktop-release.yml` runs it on Windows, Ubuntu and macOS (Apple Silicon and Intel) and attaches the packages to `v*` releases. Linux needs the usual desktop libraries at run time (OpenGL, xkbcommon, X11 or Wayland). Release builds are code-signed when the signing secrets are set ([docs/signing.md](docs/signing.md)); until then Windows SmartScreen and macOS Gatekeeper warn on first start (macOS: right-click → Open).
 
 ## Docs
-[User guide (RU)](docs/user-guide.md) · [ROADMAP](ROADMAP.md) · [architecture](docs/architecture.md) · [MCP](docs/mcp.md) · [parity checklist](docs/parity-checklist.md) · [gaps](docs/gaps.md) · [scenario tests](docs/scenario-tests.md) · [system test](docs/system-test-report.md) · [real-data run](docs/real-data-test-report.md) · design vault in `vault/` (Obsidian).
+[User guide](docs/user-guide.en.md) ([RU](docs/user-guide.md)) · [ROADMAP](ROADMAP.md) · [architecture](docs/architecture.md) · [MCP](docs/mcp.md) · [parity checklist](docs/parity-checklist.md) · [gaps](docs/gaps.md) · [scenario tests](docs/scenario-tests.md) · [system test](docs/system-test-report.md) · [real-data run](docs/real-data-test-report.md) · design vault in `vault/` (Obsidian).
 
 ## Quality gate
 `./gate.ps1` runs fmt, clippy pedantic with `-D warnings` (never-crash lints, `missing_docs` denied), nextest (with the PostgreSQL tests when `.env` exists), rustdoc `-D warnings`, doctests, cargo-deny and the layering check.

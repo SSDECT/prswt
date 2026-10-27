@@ -13,7 +13,7 @@ Not sure which Mac you have? Apple menu ▸ **About This Mac**: "Chip Apple M…
 - Windows SmartScreen: **More info ▸ Run anyway**.
 - macOS: open PRSWT once, then **System Settings ▸ Privacy & Security ▸ Open Anyway**.
 
-**Try it:** **File ▸ Open sample** opens a ready project. A tutorial project (an office building with risks and progress) is in [docs/examples](https://github.com/SSDECT/prswt/tree/main/docs/examples). User guide (Russian): [docs/user-guide.md](https://github.com/SSDECT/prswt/blob/main/docs/user-guide.md).
+**Try it:** **File ▸ Open sample** opens a ready project. A tutorial project (an office building with risks and progress) is in [docs/examples](https://github.com/SSDECT/prswt/tree/main/docs/examples). User guide: [English](https://github.com/SSDECT/prswt/blob/main/docs/user-guide.en.md), [Russian](https://github.com/SSDECT/prswt/blob/main/docs/user-guide.md).
 
 ---
 
