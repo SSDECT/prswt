@@ -7,7 +7,7 @@
 | 4 | Secrets in a gitignored `.env` | Temporary by user decision; move to Bitwarden | CLAUDE.md |
 | 7 | Roles; OBS-based security | P6 resource/security parity | Needs a design (role entity, staffing, access per OBS node) |
 | 12 | egui default fonts are bundled (OFL/Ubuntu licences) | GridCraft keeps fonts in a separate repo | `deny.toml`; licences allowed |
-| 13 | Desktop binaries are not code-signed | SmartScreen / Gatekeeper warnings | Waiting for SignPath and the Apple secrets |
+| 13 | Desktop binaries are not code-signed | SmartScreen / Gatekeeper warnings | Windows: Microsoft Store package (DSK-13, Store signs it); GitHub zip and macOS still wait for a certificate and the Apple secrets |
 | 16 | MSPDI: SS/SF from a summary task and FF/SF into one have no exact equivalent | Those links are skipped on import | `prswt-formats/src/mspdi.rs` |
 | 17 | Desktop: one window; comparison is an overlay on the Gantt (another branch or project) | No two windows side by side | `prswt-ui` |
 

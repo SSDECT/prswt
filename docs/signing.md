@@ -1,8 +1,15 @@
 # Signing the desktop app
 
-> **Updated:** 2026-10-26
+> **Updated:** 2026-11-01
 
 The release workflow (`.github/workflows/desktop-release.yml`) signs each package when its secrets are set in the GitHub repo (Settings ▸ Secrets and variables ▸ Actions). Until they are set, a `v*` tag still releases, with a warning: Windows packages ship unsigned and macOS packages ad-hoc signed and not notarized, so users allow them once (SmartScreen ▸ Run anyway; Privacy & Security ▸ Open Anyway). v0.1.2 shipped this way. Manual runs (workflow_dispatch) build the same way for testing. Keep every value in Bitwarden too (`prswt/<name>`).
+
+## Windows options
+
+- **Microsoft Store (in use):** free; the Store signs the MSIX package. See [microsoft-store.md](microsoft-store.md). Covers Store installs only, not the GitHub zip.
+- **SignPath Foundation:** applied 2026-10, declined. Can be tried again once the project has more users.
+- **Azure Trusted Signing (below):** about $10 a month. Individuals only in the USA and Canada; organisations in the USA, Canada, EU and UK.
+- **Certum Open Source certificate:** about €69 a year, cloud key (SimplySign) with a one-time code per signing.
 
 ## Windows: Azure Trusted Signing
 

@@ -100,11 +100,26 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          # DSK-13: Product identity from Partner Center (repo variables).
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_NAME: ${{ vars.MSIX_PUBLISHER_NAME }}
         run: bash tools/package-desktop.sh ${{ matrix.target }}
+      - name: Store identity not configured
+        if: runner.os == 'Windows' && vars.MSIX_PUBLISHER == ''
+        shell: bash
+        run: echo "::warning::PRSWT-store-x64.msix uses a placeholder identity; Partner Center will reject it (docs/microsoft-store.md)"
       - uses: actions/upload-artifact@v4
         with:
           name: prswt-${{ matrix.os }}-${{ matrix.target || 'native' }}
           path: dist/*
+      # The Store package is uploaded to Partner Center by hand (the Store signs
+      # it), so it is a build artifact, not a release file.
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: prswt-microsoft-store
+          path: dist-store/*.msix
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2

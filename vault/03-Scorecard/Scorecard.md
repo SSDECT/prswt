@@ -163,6 +163,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done + tested. IDs are stable; 
 - [x] DSK-07 Visual polish: P6-style Gantt with date axis and table, start screen, readable dates and money, app style, icon; design B (modern workspace: navigation, inspector, Ctrl+K palette, Inter, light/dark)
 - [x] DSK-08 Release builds: Windows, Linux and macOS (Apple Silicon, Intel) packages from `desktop-release` on GitHub
 - [x] DSK-12 Views page through all activity rows (up to 50,000), not just the first 1,000
+- [ ] DSK-13 Microsoft Store MSIX package (Store-signed): built in `desktop-release`; first submission waits for the Partner Center account
 - [x] DSK-09 Activity table: sort by any column, filters, column choice, CSV export, Print / PDF (browser page); reports as tables; Cancel for long commands
 - [x] DSK-10 Network (PERT) diagram view
 - [x] DSK-11 Gantt baseline bars and "Compare with" another branch or project

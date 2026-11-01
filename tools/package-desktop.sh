@@ -6,6 +6,8 @@
 # Output in dist/ (names carry no version, so the README's
 # releases/latest/download/<name> links always fetch the newest release):
 #   Windows  PRSWT-windows-x64.zip                (prswt.exe)
+#            ../dist-store/PRSWT-store-x64.msix   (Microsoft Store; needs the
+#                                                  Windows SDK, see msix())
 #   Linux    PRSWT-linux-x64.tar.gz               (prswt + prswt.desktop)
 #   macOS    PRSWT-macos-apple-silicon.dmg / PRSWT-macos-intel.dmg (PRSWT.app)
 # With TARGET (a Rust target triple) it cross-builds that target instead of
@@ -37,6 +39,30 @@ build() {
   fi
 }
 
+# DSK-13: Microsoft Store package. It goes to dist-store/, not dist/, because
+# it is uploaded to Partner Center (the Store signs it) rather than attached
+# to the GitHub release: an unsigned .msix does not install.
+msix() {
+  local makeappx layout
+  makeappx=$(ls "/c/Program Files (x86)/Windows Kits/10/bin/"*/x64/makeappx.exe 2>/dev/null | sort -V | tail -1)
+  if [ -z "$makeappx" ]; then
+    echo "makeappx not found (Windows SDK); no Store package" >&2
+    return 0
+  fi
+  layout=dist-store/layout
+  rm -rf dist-store && mkdir -p "$layout/Assets"
+  cp "$1/prswt.exe" "$layout/"
+  python tools/msix/logos.py "$layout/Assets"
+  sed -e "s|@IDENTITY_NAME@|${MSIX_IDENTITY_NAME:-SSDECT.PRSWT}|" \
+      -e "s|@PUBLISHER@|${MSIX_PUBLISHER:-CN=SSDECT}|" \
+      -e "s|@PUBLISHER_NAME@|${MSIX_PUBLISHER_NAME:-SSDECT}|" \
+      -e "s|@VERSION@|$VERSION.0|" \
+      tools/msix/AppxManifest.xml > "$layout/AppxManifest.xml"
+  "$makeappx" pack -o -d "$(cygpath -w "$layout")" -p "$(cygpath -w dist-store/PRSWT-store-x64.msix)" >/dev/null
+  rm -rf "$layout"
+  echo "dist-store/PRSWT-store-x64.msix"
+}
+
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     OUT=$(build | tail -1)
@@ -47,6 +73,7 @@ case "$(uname -s)" in
     (cd dist && rm -f "$NAME.zip" && powershell -NoProfile -Command "Compress-Archive -Path '$NAME/*' -DestinationPath '$NAME.zip'")
     rm -rf "dist/$NAME"
     echo "dist/$NAME.zip"
+    msix "$OUT"
     ;;
   Linux)
     OUT=$(build | tail -1)

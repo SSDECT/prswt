@@ -56,12 +56,15 @@ End-to-end checks on the release binaries are separate from the gate:
 PRSWT is written with [Claude Code](https://claude.com/claude-code) (Anthropic) under the direction of its author, who sets the goals and requirements, reviews the results and tests the app. Commits made this way carry a `Co-Authored-By: Claude` line, and the original brief is in [promt.md](promt.md). Every change passes the same gate as hand-written code: formatting, clippy, the test suite with hand-worked oracles in `vault/05-Math/`, rustdoc and license checks.
 
 ## Code signing policy
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) (Windows; application pending). macOS packages are signed with the author's Apple Developer ID and notarized. Only packages built by the `desktop-release` GitHub workflow from this repository are signed, and every release is approved by hand before signing.
+Release packages are built only by the `desktop-release` GitHub workflow from this repository, and every release is approved by hand.
+
+- **Windows, Microsoft Store:** the Store package is signed by Microsoft on publication ([docs/microsoft-store.md](docs/microsoft-store.md)).
+- **Windows zip, macOS and Linux packages on GitHub:** not code-signed yet. On first start, Windows SmartScreen asks to confirm (**More info ▸ Run anyway**) and macOS asks once in **Privacy & Security ▸ Open Anyway**. Signing with a code-signing certificate and an Apple Developer ID is planned ([docs/signing.md](docs/signing.md)).
 
 - Committers and reviewers: [SSDECT](https://github.com/SSDECT) (project owner), with Claude Code as a co-author under the owner's review
 - Approvers: [SSDECT](https://github.com/SSDECT)
 
-Privacy: the desktop app sends nothing to other networked systems unless the user asks for it. The only network features are the optional cloud sync and sharing on `prswt.juz.ai`, used after **File ▸ Cloud ▸ Sign in…**.
+Privacy: the desktop app sends nothing to other networked systems unless the user asks for it. The only network features are the optional cloud sync and sharing on `prswt.juz.ai`, used after **File ▸ Cloud ▸ Sign in…**. Full policy: [docs/privacy.md](docs/privacy.md).
 
 ## License
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.

@@ -14,3 +14,4 @@ vault/.obsidian/cache
 /deploy/tls/
 # Desktop packages (tools/package-desktop.sh)
 /dist/
+/dist-store/
